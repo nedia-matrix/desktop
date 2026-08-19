@@ -1,0 +1,27 @@
+{
+  "name": "@nedia-matrix/root",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@11.5.3",
+  "scripts": {
+    "build": "turbo run build",
+    "browser:install": "pnpm --filter @nedia-matrix/automation-playwright exec playwright install chromium",
+    "dev": "turbo run build --filter='./packages/**' && pnpm --filter @nedia-matrix/desktop dev",
+    "desktop:build-dependencies": "turbo run build --filter=\"@nedia-matrix/desktop^...\"",
+    "desktop:package:mac": "pnpm desktop:build-dependencies && pnpm --filter @nedia-matrix/desktop package:mac",
+    "desktop:package:win": "pnpm desktop:build-dependencies && pnpm --filter @nedia-matrix/desktop package:win",
+    "mock": "turbo run build --filter='./packages/**' && pnpm --filter @nedia-matrix/mock-platform dev",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "postinstall": "node scripts/fix-electron.mjs",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.3",
+    "turbo": "^2.10.8",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  }
+}

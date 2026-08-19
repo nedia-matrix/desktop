@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' https: data:; style-src 'self'; script-src 'self'"
+    />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>Nedia Matrix</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">Nedia</span>
+          <div>
+            <strong>Matrix</strong>
+            <span>Desktop Runtime</span>
+          </div>
+        </div>
+
+        <nav
+          id="primary-navigation"
+          class="primary-navigation"
+          aria-label="主导航"
+        >
+          <a href="#/accounts"><span aria-hidden="true">01</span>账号管理</a>
+          <a href="#/publish"><span aria-hidden="true">02</span>内容发布</a>
+          <a href="#/publications"
+            ><span aria-hidden="true">03</span>发布历史</a
+          >
+          <a href="#/diagnostics"><span aria-hidden="true">04</span>服务诊断</a>
+        </nav>
+
+        <p id="app-version" class="sidebar-note">版本读取中…</p>
+      </aside>
+
+      <main class="workspace">
+        <header class="page-header">
+          <p class="eyebrow">MATRIX DESKTOP</p>
+          <h1 id="page-title">内容矩阵</h1>
+          <p id="page-description" class="page-description">正在加载…</p>
+        </header>
+        <div id="page-content" class="page-content" aria-live="polite"></div>
+        <output id="status" class="global-status">准备就绪</output>
+      </main>
+    </div>
+
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

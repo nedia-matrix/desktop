@@ -1,0 +1,17 @@
+export const ipcChannels = {
+  listPlatforms: "matrix:platforms:list",
+  listPlatformAccounts: "matrix:accounts:list",
+  createPlatformAccount: "matrix:accounts:create",
+  openPlatformLogin: "matrix:accounts:open-login",
+  openPlatformAccount: "matrix:accounts:open",
+  refreshPlatformAccount: "matrix:accounts:refresh",
+  removePlatformAccount: "matrix:accounts:remove",
+  platformAccountUpdate: "matrix:accounts:update",
+  selectPublishMedia: "matrix:publish:select-media",
+  preparePublishDraft: "matrix:publish:prepare-draft",
+  listPublications: "matrix:publications:list",
+  openPublication: "matrix:publications:open",
+  publishResultUpdate: "matrix:publish:result-update",
+  getLocalRuntimeDiagnostics: "matrix:runtime:diagnostics",
+  clearLocalRuntimeRequestLogs: "matrix:runtime:clear-request-logs",
+} as const;

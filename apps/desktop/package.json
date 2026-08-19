@@ -1,0 +1,78 @@
+{
+  "name": "@nedia-matrix/desktop",
+  "private": true,
+  "version": "0.1.2",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "build": "electron-vite build",
+    "dev": "electron-vite dev",
+    "package:mac": "pnpm run build && electron-builder --mac --publish never",
+    "package:win": "pnpm run build && electron-builder --win --publish never",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
+  },
+  "dependencies": {
+    "@nedia-matrix/application-publishing": "workspace:*",
+    "@nedia-matrix/automation-engine": "workspace:*",
+    "@nedia-matrix/automation-playwright": "workspace:*",
+    "@nedia-matrix/ipc-contracts": "workspace:*",
+    "@nedia-matrix/domain-core": "workspace:*",
+    "@nedia-matrix/platform-core": "workspace:*",
+    "@nedia-matrix/platform-douyin": "workspace:*",
+    "@nedia-matrix/platform-kuaishou": "workspace:*",
+    "@nedia-matrix/platform-xiaohongshu": "workspace:*",
+    "electron-store": "^10.1.0"
+  },
+  "devDependencies": {
+    "@nedia-matrix/tsconfig": "workspace:*",
+    "@types/node": "^26.1.2",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "catalog:",
+    "vite": "^7.3.6",
+    "vitest": "catalog:"
+  },
+  "build": {
+    "appId": "com.nediamatrix.desktop",
+    "productName": "NediaMatrix",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "icon": "resources/icon.icns",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "icon": "resources/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

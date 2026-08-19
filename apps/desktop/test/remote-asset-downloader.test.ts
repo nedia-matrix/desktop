@@ -1,0 +1,137 @@
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { ContentAddressedPublicationAssetStore } from "../src/main/publishing/publication-asset-store.js";
+import {
+  RemoteAssetDownloader,
+  type RemotePublicationAsset,
+} from "../src/main/publishing/remote-asset-downloader.js";
+
+const temporaryRoots: string[] = [];
+const png = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4,
+]);
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
+
+async function fixture(options?: {
+  body?: Buffer;
+  maxAssetBytes?: number;
+  responses?: Response[];
+}) {
+  const root = await mkdtemp(join(tmpdir(), "matrix-assets-"));
+  temporaryRoots.push(root);
+  const responses = options?.responses ?? [new Response(options?.body ?? png)];
+  const fetch = vi.fn(async () => responses.shift() ?? new Response(png));
+  const assetStore = new ContentAddressedPublicationAssetStore(
+    join(root, "assets"),
+  );
+  const downloader = new RemoteAssetDownloader({
+    assetStore,
+    stagingRoot: join(root, "staging"),
+    fetch,
+    maxAssetBytes: options?.maxAssetBytes,
+    resolveHost: async () => ["203.0.113.10"],
+  });
+  return { assetStore, downloader, fetch, root };
+}
+
+function image(
+  overrides: Partial<RemotePublicationAsset> = {},
+): RemotePublicationAsset {
+  return {
+    url: "https://assets.example.test/image.png?temporary=secret",
+    name: "image.png",
+    mediaType: "image/png",
+    role: "image",
+    order: 0,
+    sourceAssetId: "asset-1",
+    ...overrides,
+  };
+}
+
+describe("RemoteAssetDownloader", () => {
+  it("archives a validated asset without retaining its signed URL", async () => {
+    const { assetStore, downloader } = await fixture();
+
+    const [downloaded] = await downloader.download("request-1", [image()]);
+
+    expect(downloaded).toMatchObject({
+      created: true,
+      mediaType: "image/png",
+      size: png.length,
+      sourceAssetId: "asset-1",
+      sourceOrigin: "https://assets.example.test",
+    });
+    expect(downloaded?.localRelativePath).toMatch(
+      /^sha256\/[a-f0-9]{2}\/[a-f0-9]{64}\.png$/,
+    );
+    await expect(readFile(downloaded!.filePath)).resolves.toEqual(png);
+    await expect(assetStore.list()).resolves.toEqual([
+      {
+        relativePath: downloaded!.localRelativePath,
+        size: png.length,
+      },
+    ]);
+    expect(JSON.stringify(downloaded)).not.toContain("temporary=secret");
+  });
+
+  it("deduplicates identical content across requests", async () => {
+    const { downloader, root } = await fixture({
+      responses: [new Response(png), new Response(png)],
+    });
+
+    const [first] = await downloader.download("request-1", [image()]);
+    const [second] = await downloader.download("request-2", [image()]);
+
+    expect(second?.filePath).toBe(first?.filePath);
+    expect(second?.created).toBe(false);
+    const files = await readdir(join(root, "assets"), { recursive: true });
+    expect(files.filter((entry) => entry.endsWith(".png"))).toHaveLength(1);
+  });
+
+  it("rejects oversized and forged media without leaving archived files", async () => {
+    const oversized = await fixture({ maxAssetBytes: png.length - 1 });
+    await expect(
+      oversized.downloader.download("request-1", [image()]),
+    ).rejects.toThrow("per-file size limit");
+
+    const forged = await fixture({ body: Buffer.from("not an image") });
+    await expect(
+      forged.downloader.download("request-2", [image()]),
+    ).rejects.toThrow("media type mismatch");
+
+    await expect(readdir(join(oversized.root, "assets"))).rejects.toThrow();
+    await expect(readdir(join(forged.root, "assets"))).rejects.toThrow();
+  });
+
+  it("rejects unsafe URLs and validates every redirect target", async () => {
+    const direct = await fixture();
+    await expect(
+      direct.downloader.download("request-1", [
+        image({ url: "http://assets.example.test/image.png" }),
+      ]),
+    ).rejects.toThrow("must use HTTPS");
+
+    const redirected = await fixture({
+      responses: [
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://127.0.0.1/private.png" },
+        }),
+      ],
+    });
+    await expect(
+      redirected.downloader.download("request-2", [image()]),
+    ).rejects.toThrow("private address");
+  });
+});

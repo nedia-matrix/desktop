@@ -1,0 +1,223 @@
+import type {
+  AutomationDriver,
+  AutomationKey,
+  ElementReference,
+  LocatorCandidate,
+  SessionProbeClient,
+} from "@nedia-matrix/automation-contracts";
+import { describe, expect, it } from "vitest";
+
+import {
+  defineAutomationPage,
+  defineSessionDetectionPlan,
+  defineWorkflow,
+  detectPlatformSession,
+  executeWorkflow,
+} from "../src/index.js";
+
+class MemoryDriver implements AutomationDriver {
+  readonly actions: string[] = [];
+  private url = "about:blank";
+
+  async currentUrl() {
+    return this.url;
+  }
+
+  async navigate(url: string) {
+    this.url = url;
+    this.actions.push(`navigate:${url}`);
+  }
+
+  async wait() {}
+
+  async query(candidate: LocatorCandidate) {
+    const id = candidate.kind === "test-id" ? candidate.value : undefined;
+    if (!id) return [];
+    return [
+      {
+        id,
+        state: {
+          attached: true,
+          visible: true,
+          enabled: true,
+          editable: id === "body",
+        },
+      },
+    ];
+  }
+
+  async click(target: ElementReference) {
+    this.actions.push(`click:${target.id}`);
+  }
+
+  async fill(target: ElementReference, value: string) {
+    this.actions.push(`fill:${target.id}:${value}`);
+  }
+
+  async typeText(target: ElementReference, value: string, delayMs = 0) {
+    this.actions.push(`type:${target.id}:${value}:${delayMs}`);
+  }
+
+  async pressKey(target: ElementReference, key: AutomationKey) {
+    this.actions.push(`press:${target.id}:${key}`);
+  }
+
+  async uploadFiles(target: ElementReference, paths: readonly string[]) {
+    this.actions.push(`upload:${target.id}:${paths.join(",")}`);
+  }
+
+  async dropFiles(target: ElementReference, paths: readonly string[]) {
+    this.actions.push(`drop:${target.id}:${paths.join(",")}`);
+  }
+
+  async textContent(target: ElementReference) {
+    return target.id === "nickname" ? "测试账号" : null;
+  }
+
+  async attribute(target: ElementReference, name: string) {
+    return target.id === "account" && name === "data-id" ? "user-42" : null;
+  }
+
+  async captureEvidence(reason: string) {
+    return { id: "evidence-1", capturedAt: new Date(0).toISOString(), reason };
+  }
+}
+
+const page = defineAutomationPage({
+  id: "publish",
+  states: {
+    editorReady: { kind: "target", targetId: "body", state: "editable" },
+  },
+  targets: {
+    media: { candidates: [{ kind: "test-id", value: "media" }] },
+    body: { candidates: [{ kind: "test-id", value: "body" }] },
+    submit: { candidates: [{ kind: "test-id", value: "submit" }] },
+  },
+});
+
+describe("automation definitions and execution", () => {
+  it("rejects broken semantic references when definitions are created", () => {
+    expect(() =>
+      defineAutomationPage({
+        id: "broken",
+        states: {
+          ready: { kind: "target", targetId: "missing", state: "visible" },
+        },
+        targets: {},
+      }),
+    ).toThrow(/Unknown target: missing/);
+  });
+
+  it("executes a workflow that owns its page and start URL", async () => {
+    const workflow = defineWorkflow({
+      id: "publish.prepare",
+      page,
+      startUrl: "https://example.test/publish",
+      steps: [
+        { kind: "upload", targetId: "media", inputKey: "mediaPaths" },
+        { kind: "wait-for-state", stateId: "editorReady" },
+        { kind: "fill", targetId: "body", inputKey: "body" },
+        { kind: "click", targetId: "submit" },
+      ],
+    });
+    const driver = new MemoryDriver();
+
+    await executeWorkflow(workflow, driver, {
+      mediaPaths: ["/tmp/cover.png"],
+      body: "正文",
+    });
+
+    expect(driver.actions).toEqual([
+      "navigate:https://example.test/publish",
+      "upload:media:/tmp/cover.png",
+      "fill:body:正文",
+      "click:submit",
+    ]);
+  });
+
+  it("validates required input kinds before changing the page", async () => {
+    const workflow = defineWorkflow({
+      id: "publish.prepare",
+      page,
+      startUrl: "https://example.test/publish",
+      steps: [{ kind: "upload", targetId: "media", inputKey: "mediaPaths" }],
+    });
+    const driver = new MemoryDriver();
+
+    await expect(executeWorkflow(workflow, driver, {})).rejects.toMatchObject({
+      details: { code: "INPUT_NOT_FOUND", workflowId: "publish.prepare" },
+    });
+    expect(driver.actions).toEqual([]);
+  });
+
+  it("adds workflow context and evidence to action failures", async () => {
+    const workflow = defineWorkflow({
+      id: "publish.prepare",
+      page,
+      steps: [{ kind: "fill", targetId: "body", inputKey: "body" }],
+    });
+    const driver = new MemoryDriver();
+    driver.fill = async () => {
+      throw new Error("page changed");
+    };
+
+    await expect(
+      executeWorkflow(workflow, driver, { body: "正文" }),
+    ).rejects.toMatchObject({
+      details: {
+        code: "ACTION_FAILED",
+        workflowId: "publish.prepare",
+        pageId: "publish",
+        stepIndex: 0,
+        targetId: "body",
+        evidence: { id: "evidence-1" },
+      },
+    });
+  });
+});
+
+describe("platform session detection", () => {
+  it("uses one ordered probe model and extracts account information", async () => {
+    const detection = defineSessionDetectionPlan({
+      probes: [
+        {
+          source: { kind: "request", url: "https://example.test/session" },
+          fields: {
+            externalAccountId: ["data", "id"],
+            nickname: ["data", "name"],
+          },
+          accountInfo: [
+            {
+              key: "follower_count",
+              valuePath: ["data", "followers"],
+              valueType: "number",
+            },
+          ],
+        },
+      ],
+    });
+    const client: SessionProbeClient = {
+      async fetchJson() {
+        return {
+          status: 200,
+          ok: true,
+          body: { data: { id: "user-42", name: "测试账号", followers: "12" } },
+        };
+      },
+      async waitForJsonResponse() {
+        return null;
+      },
+    };
+
+    await expect(
+      detectPlatformSession(detection, new MemoryDriver(), client),
+    ).resolves.toEqual({
+      status: "authenticated",
+      externalAccountId: "user-42",
+      nickname: "测试账号",
+      avatarUrl: null,
+      accountInfo: [{ key: "follower_count", value: 12 }],
+      source: "api",
+    });
+  });
+});
