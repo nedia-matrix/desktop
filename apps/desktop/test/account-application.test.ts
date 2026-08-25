@@ -21,10 +21,46 @@ const account: PlatformAccountSummary = {
 afterEach(() => vi.useRealTimers());
 
 describe("account application", () => {
+  it("notifies after account creation and completed removal", async () => {
+    const accounts = new Map<string, PlatformAccountSummary>();
+    let changes = 0;
+    const application = new AccountApplication({
+      accountStore: {
+        list: () => [...accounts.values()],
+        require: (accountId) => {
+          const stored = accounts.get(accountId);
+          if (!stored) throw new TypeError("Platform account does not exist");
+          return stored;
+        },
+        put: (stored) => void accounts.set(stored.id, stored),
+      },
+      browserSessions: {
+        openForLogin: async () => openedSession(),
+        openForAutomation: async () => openedSession(),
+        closeAutomation: async () => undefined,
+      },
+      removeAccountResources: async (stored) => {
+        accounts.delete(stored.id);
+      },
+      createId: () => "created-account",
+      onAccountsChanged: () => {
+        changes += 1;
+      },
+    });
+
+    const created = application.createAccount({ platformId: "douyin" });
+    expect(accounts.get(created.id)).toEqual(created);
+    expect(changes).toBe(1);
+
+    await application.removeAccount({ accountId: created.id });
+    expect(accounts.has(created.id)).toBe(false);
+    expect(changes).toBe(2);
+  });
+
   it("opens the login entry through the unified account action and recognizes the account automatically", async () => {
     vi.useFakeTimers();
     const accounts = new Map([[account.id, { ...account }]]);
-    const updates: PlatformAccountSummary[] = [];
+    const updates: number[] = [];
     const openForLogin = vi.fn(async () => openedSession());
     const sessionDetector = vi
       .fn()
@@ -55,7 +91,7 @@ describe("account application", () => {
       removeAccountResources: async () => undefined,
       now: () => new Date("2026-08-11T00:00:00.000Z"),
       sessionDetector,
-      onAccountUpdated: (updated) => updates.push(updated),
+      onAccountsChanged: () => updates.push(1),
       recognitionIntervalMs: 100,
       recognitionMaxAttempts: 2,
     });
@@ -88,7 +124,7 @@ describe("account application", () => {
       status: "authenticated",
     };
     const accounts = new Map([[storedAccount.id, storedAccount]]);
-    const updates: PlatformAccountSummary[] = [];
+    const updates: number[] = [];
     const application = new AccountApplication({
       accountStore: {
         list: () => [...accounts.values()],
@@ -114,7 +150,7 @@ describe("account application", () => {
         accountInfo: [],
         source: "api",
       }),
-      onAccountUpdated: (updated) => updates.push(updated),
+      onAccountsChanged: () => updates.push(1),
       recognitionMaxAttempts: 1,
     });
 

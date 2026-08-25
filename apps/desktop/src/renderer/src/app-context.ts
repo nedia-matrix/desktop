@@ -7,6 +7,11 @@ import type {
 
 export type StatusKind = "idle" | "busy" | "error";
 
+export interface AppStatus {
+  message: string;
+  kind: StatusKind;
+}
+
 export class AppContext {
   platforms: readonly PlatformSummary[] = [];
   accounts: readonly PlatformAccountSummary[] = [];
@@ -22,17 +27,14 @@ export class AppContext {
   private readonly accountListeners = new Set<
     (accounts: readonly PlatformAccountSummary[]) => void
   >();
+  private readonly statusListeners = new Set<(status: AppStatus) => void>();
+  private accountRefreshRequested = false;
+  private accountRefreshInFlight: Promise<void> | undefined;
+  private status: AppStatus = { message: "准备就绪", kind: "idle" };
 
-  constructor(private readonly statusOutput: HTMLOutputElement) {
-    window.matrix.onPlatformAccountUpdate((account) => {
-      const index = this.accounts.findIndex(({ id }) => id === account.id);
-      this.accounts =
-        index === -1
-          ? [...this.accounts, account]
-          : this.accounts.map((current) =>
-              current.id === account.id ? account : current,
-            );
-      for (const listener of this.accountListeners) listener(this.accounts);
+  constructor() {
+    window.matrix.onPlatformAccountsChanged(() => {
+      this.requestAccountRefresh();
     });
     window.matrix.onPublishResultUpdate((update) => {
       this.recentPublishUpdates.set(update.observationId, update);
@@ -62,14 +64,39 @@ export class AppContext {
     return this.accounts;
   }
 
+  private requestAccountRefresh(): void {
+    this.accountRefreshRequested = true;
+    if (this.accountRefreshInFlight) return;
+
+    this.accountRefreshInFlight = (async () => {
+      do {
+        this.accountRefreshRequested = false;
+        await this.refreshAccounts();
+        for (const listener of this.accountListeners) listener(this.accounts);
+      } while (this.accountRefreshRequested);
+    })().finally(() => {
+      this.accountRefreshInFlight = undefined;
+    });
+    void this.accountRefreshInFlight.catch(() => undefined);
+  }
+
   async refreshPublications(): Promise<readonly PublicationSummary[]> {
     this.publications = await window.matrix.listPublications();
     return this.publications;
   }
 
   setStatus(message: string, kind: StatusKind = "idle"): void {
-    this.statusOutput.textContent = message;
-    this.statusOutput.dataset.kind = kind;
+    this.status = { message, kind };
+    for (const listener of this.statusListeners) listener(this.status);
+  }
+
+  currentStatus(): AppStatus {
+    return this.status;
+  }
+
+  onStatusUpdate(listener: (status: AppStatus) => void): () => void {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
   }
 
   onPublishUpdate(listener: (update: PublishResultUpdate) => void): () => void {

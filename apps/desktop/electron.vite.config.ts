@@ -22,6 +22,10 @@ export default defineConfig({
     },
   },
   renderer: {
+    esbuild: {
+      jsx: "automatic",
+      jsxImportSource: "preact",
+    },
     server: {
       port: 3000,
       strictPort: true,

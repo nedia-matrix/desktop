@@ -1,7 +1,7 @@
 {
   "name": "@nedia-matrix/desktop",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.2.0",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -22,7 +22,8 @@
     "@nedia-matrix/platform-douyin": "workspace:*",
     "@nedia-matrix/platform-kuaishou": "workspace:*",
     "@nedia-matrix/platform-xiaohongshu": "workspace:*",
-    "electron-store": "^10.1.0"
+    "electron-store": "^10.1.0",
+    "preact": "^10.29.8"
   },
   "devDependencies": {
     "@nedia-matrix/tsconfig": "workspace:*",
@@ -45,6 +46,12 @@
     "files": [
       "out/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/logo.png",
+        "to": "tray-icon.png"
+      }
     ],
     "mac": {
       "icon": "resources/icon.icns",

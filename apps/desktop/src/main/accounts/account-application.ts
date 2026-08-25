@@ -46,7 +46,7 @@ export interface AccountApplicationDependencies {
   createId?: (() => string) | undefined;
   now?: (() => Date) | undefined;
   sessionDetector?: typeof detectPlatformSession | undefined;
-  onAccountUpdated?: ((account: PlatformAccountSummary) => void) | undefined;
+  onAccountsChanged?: (() => void) | undefined;
   recognitionIntervalMs?: number | undefined;
   recognitionMaxAttempts?: number | undefined;
 }
@@ -98,6 +98,7 @@ export class AccountApplication {
       updatedAt: now,
     };
     this.dependencies.accountStore.put(account);
+    this.dependencies.onAccountsChanged?.();
     return account;
   }
 
@@ -156,6 +157,7 @@ export class AccountApplication {
     const account = this.dependencies.accountStore.require(request.accountId);
     platformFor(account.platformId);
     await this.dependencies.removeAccountResources(account);
+    this.dependencies.onAccountsChanged?.();
   }
 
   recordSessionDetection(
@@ -311,7 +313,7 @@ export class AccountApplication {
       updatedAt: now,
     };
     this.dependencies.accountStore.put(updated);
-    this.dependencies.onAccountUpdated?.(updated);
+    this.dependencies.onAccountsChanged?.();
     return updated;
   }
 

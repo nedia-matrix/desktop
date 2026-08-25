@@ -2,13 +2,16 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { PublishingService } from "@nedia-matrix/application-publishing";
-import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
 import { app } from "electron";
 
 import { registerAccountIpcHandlers } from "./accounts/account-ipc.js";
 import { PlatformAccountStore } from "./accounts/account-store.js";
 import { BrowserProfileHost } from "./accounts/browser-session-host.js";
-import { DesktopDistributionApplication } from "./desktop-application.js";
+import {
+  NediaMatrixApplication,
+  type ApplicationEventSink,
+} from "./application/nedia-matrix-application.js";
+import { ApplicationTray } from "./application-tray.js";
 import { MainWindowHost } from "./main-window-host.js";
 import {
   findNediaMatrixOpenUrl,
@@ -19,7 +22,7 @@ import {
   LocalRuntimeServer,
   readLocalRuntimePort,
 } from "./local-runtime/local-runtime-server.js";
-import { registerRuntimeDiagnosticsIpcHandlers } from "./local-runtime/runtime-diagnostics-ipc.js";
+import { registerRuntimeStatusIpcHandler } from "./local-runtime/runtime-status-ipc.js";
 import { RuntimeAccountBindingStore } from "./local-runtime/runtime-account-binding-store.js";
 import { AccountPublicationLock } from "./publishing/account-publication-lock.js";
 import { MediaSelectionStore } from "./publishing/media-selection-store.js";
@@ -49,8 +52,15 @@ const publishing = new PublishingService(
   { now: () => new Date() },
   { create: () => randomUUID() },
 );
+let application: NediaMatrixApplication | undefined;
+let applicationTray: ApplicationTray | undefined;
 const publicationObservations = new PublicationObservationSink(
-  publishing,
+  {
+    recordObservation: (publicationId, result) => {
+      if (!application) throw new Error("Application is not initialized");
+      return application.publications.recordObservation(publicationId, result);
+    },
+  },
   (event) => {
     mainWindow.sendPublishResult(toPublishResultUpdate(event));
     localRuntimeServer?.publishPublicationUpdate(event.publicationId);
@@ -112,7 +122,6 @@ publicationRetryTimer.unref();
 void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
   .then(() => {
     if (!hasSingleInstanceLock) return;
-    publishing.recoverInterrupted();
     const publicationAssetStore = new ContentAddressedPublicationAssetStore(
       path.join(app.getPath("userData"), "assets"),
     );
@@ -123,15 +132,23 @@ void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
     const dependencies = {
       accountPublications,
       accountStore,
+      accountBindings: runtimeAccountBindings,
       browserSessions,
       mediaSelections,
       publishObservations,
       publishing,
       remoteAssets,
-      onAccountUpdated: (account: PlatformAccountSummary) =>
-        mainWindow.sendAccountUpdate(account),
+      eventSink: {
+        publish: (event) => {
+          if (event.type === "accounts.changed") {
+            mainWindow.sendAccountsChanged();
+            localRuntimeServer?.publishAccountsChanged();
+          }
+        },
+      } satisfies ApplicationEventSink,
     };
-    const application = new DesktopDistributionApplication(dependencies);
+    application = new NediaMatrixApplication(dependencies);
+    application.publications.recoverInterrupted();
     registerAccountIpcHandlers(application);
     registerPublishIpcHandlers({
       ...dependencies,
@@ -152,7 +169,6 @@ void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
 
     localRuntimeServer = new LocalRuntimeServer({
       application,
-      accountBindings: runtimeAccountBindings,
       port: readLocalRuntimePort(process.env.MATRIX_RUNTIME_PORT),
       handshake: {
         protocolVersion: 1,
@@ -173,9 +189,14 @@ void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
         },
       },
     });
-    registerRuntimeDiagnosticsIpcHandlers(localRuntimeServer);
+    registerRuntimeStatusIpcHandler(localRuntimeServer);
     void localRuntimeServer.start().catch((error: unknown) => {
       console.error("Failed to start local runtime server", error);
+    });
+
+    applicationTray = new ApplicationTray({
+      openMainWindow: () => mainWindow.open(),
+      quitApplication: () => app.quit(),
     });
 
     const initialOpenUrl = findNediaMatrixOpenUrl(process.argv);
@@ -189,7 +210,7 @@ void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
   });
 
 app.on("window-all-closed", () => {
-  app.quit();
+  // The main process, tray, and local HTTP runtime intentionally stay alive.
 });
 
 app.on("before-quit", (event) => {
@@ -217,6 +238,7 @@ app.on("before-quit", (event) => {
       console.error("Failed to cleanly shut down desktop runtime", error);
     })
     .finally(() => {
+      applicationTray?.destroy();
       quitAllowed = true;
       app.quit();
     });

@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 
 import {
   ipcChannels,
-  type PlatformAccountSummary,
   type PublishResultUpdate,
 } from "@nedia-matrix/ipc-contracts";
 import { BrowserWindow } from "electron";
@@ -60,8 +59,8 @@ export class MainWindowHost {
     this.window.webContents.send(ipcChannels.publishResultUpdate, update);
   }
 
-  sendAccountUpdate(account: PlatformAccountSummary): void {
+  sendAccountsChanged(): void {
     if (!this.window || this.window.isDestroyed()) return;
-    this.window.webContents.send(ipcChannels.platformAccountUpdate, account);
+    this.window.webContents.send(ipcChannels.platformAccountsChanged);
   }
 }

@@ -1,39 +1,32 @@
 import { ipcChannels } from "@nedia-matrix/ipc-contracts";
 import { ipcMain } from "electron";
 
-import type { AccountApplication } from "./account-application.js";
+import type { NediaMatrixUseCases } from "../application/nedia-matrix-application.js";
 
-type AccountIpcApplication = Pick<
-  AccountApplication,
-  | "listPlatforms"
-  | "listAccounts"
-  | "createAccount"
-  | "openLogin"
-  | "openAccount"
-  | "refreshAccount"
-  | "removeAccount"
->;
+type AccountIpcApplication = Pick<NediaMatrixUseCases, "accounts">;
 
 export function registerAccountIpcHandlers(
   application: AccountIpcApplication,
 ): void {
-  ipcMain.handle(ipcChannels.listPlatforms, () => application.listPlatforms());
+  ipcMain.handle(ipcChannels.listPlatforms, () =>
+    application.accounts.listPlatforms(),
+  );
   ipcMain.handle(ipcChannels.listPlatformAccounts, () =>
-    application.listAccounts(),
+    application.accounts.list(),
   );
   ipcMain.handle(ipcChannels.createPlatformAccount, (_event, request) =>
-    application.createAccount(request),
+    application.accounts.create(request),
   );
   ipcMain.handle(ipcChannels.openPlatformLogin, (_event, request) =>
-    application.openLogin(request),
+    application.accounts.openLogin(request),
   );
   ipcMain.handle(ipcChannels.openPlatformAccount, (_event, request) =>
-    application.openAccount(request),
+    application.accounts.open(request),
   );
   ipcMain.handle(ipcChannels.refreshPlatformAccount, (_event, request) =>
-    application.refreshAccount(request),
+    application.accounts.refresh(request),
   );
   ipcMain.handle(ipcChannels.removePlatformAccount, (_event, request) =>
-    application.removeAccount(request),
+    application.accounts.remove(request),
   );
 }

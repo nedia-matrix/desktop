@@ -17,7 +17,10 @@ import type {
   SelectPublishMediaRequest,
   SelectPublishMediaResult,
 } from "./publish.js";
-import type { LocalRuntimeDiagnostics } from "./runtime-diagnostics.js";
+import type {
+  LocalRuntimeStatus,
+  SetLocalRuntimeRunningRequest,
+} from "./runtime-status.js";
 
 export interface MatrixDesktopApi {
   listPlatforms(): Promise<PlatformSummary[]>;
@@ -35,9 +38,7 @@ export interface MatrixDesktopApi {
     request: PlatformAccountRequest,
   ): Promise<DetectPlatformSessionResult>;
   removePlatformAccount(request: PlatformAccountRequest): Promise<void>;
-  onPlatformAccountUpdate(
-    listener: (account: PlatformAccountSummary) => void,
-  ): () => void;
+  onPlatformAccountsChanged(listener: () => void): () => void;
   selectPublishMedia(
     request: SelectPublishMediaRequest,
   ): Promise<SelectPublishMediaResult>;
@@ -47,6 +48,8 @@ export interface MatrixDesktopApi {
   listPublications(): Promise<PublicationSummary[]>;
   openPublication(request: OpenPublicationRequest): Promise<void>;
   onPublishResultUpdate(listener: (update: PublishResultUpdate) => void): void;
-  getLocalRuntimeDiagnostics(): Promise<LocalRuntimeDiagnostics>;
-  clearLocalRuntimeRequestLogs(): Promise<void>;
+  getLocalRuntimeStatus(): Promise<LocalRuntimeStatus>;
+  setLocalRuntimeRunning(
+    request: SetLocalRuntimeRunningRequest,
+  ): Promise<LocalRuntimeStatus>;
 }

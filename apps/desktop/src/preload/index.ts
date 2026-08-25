@@ -8,6 +8,7 @@ import {
   type PreparePublishDraftRequest,
   type PublishResultUpdate,
   type SelectPublishMediaRequest,
+  type SetLocalRuntimeRunningRequest,
 } from "@nedia-matrix/ipc-contracts";
 import { contextBridge, ipcRenderer } from "electron";
 
@@ -25,13 +26,11 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.refreshPlatformAccount, request),
   removePlatformAccount: (request: PlatformAccountRequest) =>
     ipcRenderer.invoke(ipcChannels.removePlatformAccount, request),
-  onPlatformAccountUpdate: (listener) => {
-    const handler = (_event: Electron.IpcRendererEvent, account: unknown) => {
-      listener(account as Parameters<typeof listener>[0]);
-    };
-    ipcRenderer.on(ipcChannels.platformAccountUpdate, handler);
+  onPlatformAccountsChanged: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on(ipcChannels.platformAccountsChanged, handler);
     return () =>
-      ipcRenderer.removeListener(ipcChannels.platformAccountUpdate, handler);
+      ipcRenderer.removeListener(ipcChannels.platformAccountsChanged, handler);
   },
   selectPublishMedia: (request: SelectPublishMediaRequest) =>
     ipcRenderer.invoke(ipcChannels.selectPublishMedia, request),
@@ -45,10 +44,10 @@ const api: MatrixDesktopApi = {
       listener(update as PublishResultUpdate);
     });
   },
-  getLocalRuntimeDiagnostics: () =>
-    ipcRenderer.invoke(ipcChannels.getLocalRuntimeDiagnostics),
-  clearLocalRuntimeRequestLogs: () =>
-    ipcRenderer.invoke(ipcChannels.clearLocalRuntimeRequestLogs),
+  getLocalRuntimeStatus: () =>
+    ipcRenderer.invoke(ipcChannels.getLocalRuntimeStatus),
+  setLocalRuntimeRunning: (request: SetLocalRuntimeRunningRequest) =>
+    ipcRenderer.invoke(ipcChannels.setLocalRuntimeRunning, request),
 };
 
 contextBridge.exposeInMainWorld("matrix", Object.freeze(api));

@@ -5,18 +5,12 @@ import {
 } from "node:http";
 
 import type {
-  LocalRuntimeDiagnostics,
-  LocalRuntimeRequestLog,
+  LocalRuntimeStatus,
   PlatformAccountSummary,
 } from "@nedia-matrix/ipc-contracts";
 
-import type { AccountApplication } from "../accounts/account-application.js";
-import type { PublishingApplication } from "../publishing/publishing-application.js";
-import type {
-  RuntimeAccountBinding,
-  RuntimeAccountBindingStore,
-} from "./runtime-account-binding-store.js";
-import { parseWebOrigin } from "./web-origin.js";
+import { AccountBindingVerificationError } from "../accounts/account-binding-application.js";
+import type { NediaMatrixUseCases } from "../application/nedia-matrix-application.js";
 import {
   parseRuntimePublicationRequest,
   runtimePublicationEvent,
@@ -25,7 +19,9 @@ import {
 import { RuntimeEventBuffer } from "./runtime-event-buffer.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
-const MAX_REQUEST_LOGS = 500;
+type RuntimeEvent =
+  | ReturnType<typeof runtimePublicationEvent>
+  | { type: "runtime.accounts.changed" };
 
 class RuntimeRequestError extends Error {
   constructor(
@@ -55,30 +51,10 @@ export interface LocalRuntimeHandshake {
   };
 }
 
-type LocalRuntimeApplication = Pick<
-  AccountApplication,
-  | "createAccount"
-  | "listAccounts"
-  | "listPlatforms"
-  | "openAccount"
-  | "openLogin"
-  | "refreshAccount"
-  | "verifyAccount"
-  | "removeAccount"
-> &
-  Pick<PublishingApplication, "listPublications" | "prepareRemoteDraft">;
-
-type RuntimeAccountBindingsPort = Pick<
-  RuntimeAccountBindingStore,
-  "list" | "put" | "removeForRuntimeAccount"
->;
-
 interface LocalRuntimeServerOptions {
-  application: LocalRuntimeApplication;
-  accountBindings: RuntimeAccountBindingsPort;
+  application: NediaMatrixUseCases;
   handshake: LocalRuntimeHandshake;
   port?: number;
-  now?: () => Date;
 }
 
 function runtimeSession(account: PlatformAccountSummary) {
@@ -113,20 +89,23 @@ export function readLocalRuntimePort(value: unknown): number {
 
 export class LocalRuntimeServer {
   private boundPort: number | null = null;
-  private nextRequestLogId = 1;
-  private readonly requestLogs: LocalRuntimeRequestLog[] = [];
-  private readonly responseErrorCodes = new WeakMap<ServerResponse, string>();
-  private readonly events = new RuntimeEventBuffer<
-    ReturnType<typeof runtimePublicationEvent>
-  >();
+  private lifecycle = Promise.resolve();
+  private readonly events = new RuntimeEventBuffer<RuntimeEvent>();
   private readonly server = createServer((request, response) => {
-    this.observeRequest(request, response);
     this.handle(request, response);
   });
 
   constructor(private readonly options: LocalRuntimeServerOptions) {}
 
-  async start(): Promise<number> {
+  start(): Promise<number> {
+    return this.enqueueLifecycleOperation(() => this.startListening());
+  }
+
+  stop(): Promise<void> {
+    return this.enqueueLifecycleOperation(() => this.stopListening());
+  }
+
+  private async startListening(): Promise<number> {
     if (this.boundPort !== null) return this.boundPort;
 
     await new Promise<void>((resolve, reject) => {
@@ -150,61 +129,36 @@ export class LocalRuntimeServer {
     return address.port;
   }
 
-  async stop(): Promise<void> {
+  private async stopListening(): Promise<void> {
     this.events.close();
-    if (!this.server.listening) return;
+    if (!this.server.listening) {
+      this.boundPort = null;
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
       this.server.close((error) => (error ? reject(error) : resolve()));
     });
     this.boundPort = null;
   }
 
-  diagnostics(): LocalRuntimeDiagnostics {
+  private enqueueLifecycleOperation<Result>(
+    operation: () => Promise<Result>,
+  ): Promise<Result> {
+    const result = this.lifecycle.then(operation, operation);
+    this.lifecycle = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  status(): LocalRuntimeStatus {
     return {
       status: this.boundPort === null ? "stopped" : "running",
       version: this.options.handshake.runtimeVersion,
       host: LOOPBACK_HOST,
       port: this.boundPort,
-      requests: [...this.requestLogs].reverse(),
     };
-  }
-
-  clearRequestLogs(): void {
-    this.requestLogs.length = 0;
-  }
-
-  private observeRequest(
-    request: IncomingMessage,
-    response: ServerResponse,
-  ): void {
-    const startedAt = (this.options.now ?? (() => new Date()))();
-    const path = this.requestPath(request);
-    const origin = parseWebOrigin(request.headers.origin);
-
-    response.once("finish", () => {
-      const finishedAt = (this.options.now ?? (() => new Date()))();
-      this.requestLogs.push({
-        id: this.nextRequestLogId++,
-        timestamp: startedAt.toISOString(),
-        method: request.method ?? "UNKNOWN",
-        path,
-        statusCode: response.statusCode,
-        durationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
-        origin,
-        errorCode: this.responseErrorCodes.get(response) ?? null,
-      });
-      if (this.requestLogs.length > MAX_REQUEST_LOGS) {
-        this.requestLogs.splice(0, this.requestLogs.length - MAX_REQUEST_LOGS);
-      }
-    });
-  }
-
-  private requestPath(request: IncomingMessage): string {
-    try {
-      return new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-    } catch {
-      return "/";
-    }
   }
 
   private handle(request: IncomingMessage, response: ServerResponse): void {
@@ -245,13 +199,17 @@ export class LocalRuntimeServer {
       this.json(
         response,
         200,
-        this.options.application.listAccounts().map(runtimeSession),
+        this.options.application.accounts.list().map(runtimeSession),
       );
       return;
     }
 
     if (request.method === "GET" && url.pathname === "/v1/platforms") {
-      this.json(response, 200, this.options.application.listPlatforms());
+      this.json(
+        response,
+        200,
+        this.options.application.accounts.listPlatforms(),
+      );
       return;
     }
 
@@ -295,7 +253,7 @@ export class LocalRuntimeServer {
     }
 
     if (request.method === "GET" && url.pathname === "/v1/account-bindings") {
-      this.json(response, 200, this.options.accountBindings.list());
+      this.json(response, 200, this.options.application.accountBindings.list());
       return;
     }
 
@@ -325,7 +283,7 @@ export class LocalRuntimeServer {
     try {
       const body = await this.readJsonRequest(request);
       const platformId = typeof body.platform === "string" ? body.platform : "";
-      const account = this.options.application.createAccount({ platformId });
+      const account = this.options.application.accounts.create({ platformId });
       this.json(response, 201, runtimeSession(account));
     } catch (error) {
       this.accountActionError(response, error);
@@ -333,10 +291,14 @@ export class LocalRuntimeServer {
   }
 
   publishPublicationUpdate(publicationId: string): void {
-    const summary = this.options.application
-      .listPublications()
+    const summary = this.options.application.publications
+      .list()
       .find((publication) => publication.id === publicationId);
     if (summary) this.events.append(runtimePublicationEvent(summary));
+  }
+
+  publishAccountsChanged(): void {
+    this.events.append({ type: "runtime.accounts.changed" });
   }
 
   private async pollEvents(
@@ -370,7 +332,8 @@ export class LocalRuntimeServer {
         input.runtimeAccountId,
         input.platform,
       );
-      const result = await this.options.application.prepareRemoteDraft(input);
+      const result =
+        await this.options.application.publications.prepareRemote(input);
       if (result.status === "login_required") {
         this.json(response, 409, {
           code: "NOT_LOGGED_IN",
@@ -392,8 +355,8 @@ export class LocalRuntimeServer {
         });
         return;
       }
-      const summary = this.options.application
-        .listPublications()
+      const summary = this.options.application.publications
+        .list()
         .find((publication) => publication.requestId === input.requestId);
       if (!summary) throw new Error("Publication was not persisted");
       this.json(response, 202, runtimePublicationStatus(summary));
@@ -417,8 +380,8 @@ export class LocalRuntimeServer {
   }
 
   private publicationStatus(response: ServerResponse, requestId: string): void {
-    const summary = this.options.application
-      .listPublications()
+    const summary = this.options.application.publications
+      .list()
       .find((publication) => publication.requestId === requestId);
     this.json(
       response,
@@ -438,7 +401,7 @@ export class LocalRuntimeServer {
       const body = await this.readJsonRequest(request);
       const account = this.requireAccount(runtimeAccountId);
       if (account.status === "login_required") {
-        const platform = this.options.application
+        const platform = this.options.application.accounts
           .listPlatforms()
           .find((candidate) => candidate.id === account.platformId);
         const requestedLoginEntryId =
@@ -447,12 +410,12 @@ export class LocalRuntimeServer {
           requestedLoginEntryId ?? platform?.loginEntries[0]?.id;
         if (!loginEntryId)
           throw new TypeError("Platform does not have a login entry");
-        await this.options.application.openLogin({
+        await this.options.application.accounts.openLogin({
           accountId: runtimeAccountId,
           loginEntryId,
         });
       } else {
-        await this.options.application.openAccount({
+        await this.options.application.accounts.open({
           accountId: runtimeAccountId,
         });
       }
@@ -467,7 +430,7 @@ export class LocalRuntimeServer {
     runtimeAccountId: string,
   ): Promise<void> {
     try {
-      await this.options.application.refreshAccount({
+      await this.options.application.accounts.refresh({
         accountId: runtimeAccountId,
       });
       this.json(
@@ -485,10 +448,9 @@ export class LocalRuntimeServer {
     runtimeAccountId: string,
   ): Promise<void> {
     try {
-      await this.options.application.removeAccount({
+      await this.options.application.accounts.remove({
         accountId: runtimeAccountId,
       });
-      this.options.accountBindings.removeForRuntimeAccount(runtimeAccountId);
       this.json(response, 200, { removed: true, runtimeAccountId });
     } catch (error) {
       this.accountActionError(response, error);
@@ -496,8 +458,8 @@ export class LocalRuntimeServer {
   }
 
   private requireAccount(runtimeAccountId: string): PlatformAccountSummary {
-    const account = this.options.application
-      .listAccounts()
+    const account = this.options.application.accounts
+      .list()
       .find((candidate) => candidate.id === runtimeAccountId);
     if (!account) throw new TypeError("Runtime account does not exist");
     return account;
@@ -512,21 +474,10 @@ export class LocalRuntimeServer {
       const body = await this.readJsonRequest(request);
       const runtimeAccountId =
         typeof body.runtimeAccountId === "string" ? body.runtimeAccountId : "";
-      const account = this.options.application
-        .listAccounts()
-        .find((candidate) => candidate.id === runtimeAccountId);
-      if (!account) throw new TypeError("Runtime account does not exist");
-      if (!account.externalAccountId) {
-        throw new TypeError("Runtime account does not have a stable identity");
-      }
-      const binding: RuntimeAccountBinding = {
+      const binding = this.options.application.accountBindings.bind({
         platformAccountId,
-        runtimeAccountId: account.id,
-        platform: account.platformId,
-        externalAccountId: account.externalAccountId,
-        boundAt: (this.options.now ?? (() => new Date()))().toISOString(),
-      };
-      this.options.accountBindings.put(binding);
+        runtimeAccountId,
+      });
       this.json(response, 200, binding);
     } catch (error) {
       this.json(response, 400, {
@@ -562,61 +513,24 @@ export class LocalRuntimeServer {
     platformAccountId: string,
     runtimeAccountId?: string,
     platform?: string,
-  ): Promise<{
-    account: PlatformAccountSummary;
-    binding: RuntimeAccountBinding;
-  }> {
-    const binding = this.options.accountBindings
-      .list()
-      .find((candidate) => candidate.platformAccountId === platformAccountId);
-    if (!binding) {
-      throw new RuntimeRequestError(
-        "ACCOUNT_IDENTITY_MISMATCH",
-        "Account binding does not exist",
-      );
+  ): Promise<
+    Awaited<ReturnType<NediaMatrixUseCases["accountBindings"]["verify"]>>
+  > {
+    try {
+      return await this.options.application.accountBindings.verify({
+        platformAccountId,
+        runtimeAccountId,
+        platform,
+      });
+    } catch (error) {
+      if (error instanceof AccountBindingVerificationError) {
+        throw new RuntimeRequestError(error.code, error.message);
+      }
+      if (hasBindingErrorCode(error)) {
+        throw new RuntimeRequestError(error.code, error.message);
+      }
+      throw error;
     }
-    if (
-      (runtimeAccountId !== undefined &&
-        runtimeAccountId !== binding.runtimeAccountId) ||
-      (platform !== undefined && platform !== binding.platform)
-    ) {
-      throw new RuntimeRequestError(
-        "ACCOUNT_IDENTITY_MISMATCH",
-        "Publication target does not match account binding",
-      );
-    }
-    const detected = await this.options.application.verifyAccount({
-      accountId: binding.runtimeAccountId,
-    });
-    if (detected.status === "login_required") {
-      throw new RuntimeRequestError(
-        "NOT_LOGGED_IN",
-        "Runtime account is not authenticated",
-      );
-    }
-    if (detected.status === "unknown") {
-      throw new RuntimeRequestError(
-        "ACCOUNT_IDENTITY_MISMATCH",
-        detected.reason,
-      );
-    }
-    const account = this.requireAccount(binding.runtimeAccountId);
-    if (account.status !== "authenticated") {
-      throw new RuntimeRequestError(
-        "NOT_LOGGED_IN",
-        "Runtime account is not authenticated",
-      );
-    }
-    if (
-      account.platformId !== binding.platform ||
-      account.externalAccountId !== binding.externalAccountId
-    ) {
-      throw new RuntimeRequestError(
-        "ACCOUNT_IDENTITY_MISMATCH",
-        "Runtime account identity does not match the binding",
-      );
-    }
-    return { account, binding };
   }
 
   private accountActionError(response: ServerResponse, error: unknown): void {
@@ -661,17 +575,21 @@ export class LocalRuntimeServer {
   }
 
   private json(response: ServerResponse, status: number, value: unknown): void {
-    if (
-      typeof value === "object" &&
-      value !== null &&
-      "code" in value &&
-      typeof value.code === "string"
-    ) {
-      this.responseErrorCodes.set(response, value.code);
-    }
     response.statusCode = status;
     response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.setHeader("Cache-Control", "no-store");
     response.end(JSON.stringify(value));
   }
+}
+
+function hasBindingErrorCode(error: unknown): error is Error & {
+  code: "ACCOUNT_IDENTITY_MISMATCH" | "NOT_LOGGED_IN";
+} {
+  return (
+    error instanceof Error &&
+    (error as { code?: unknown }).code !== undefined &&
+    ((error as unknown as { code: unknown }).code ===
+      "ACCOUNT_IDENTITY_MISMATCH" ||
+      (error as unknown as { code: unknown }).code === "NOT_LOGGED_IN")
+  );
 }

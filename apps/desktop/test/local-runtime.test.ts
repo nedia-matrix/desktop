@@ -107,138 +107,225 @@ function createRuntimeApplication(
   const accounts = [...initialAccounts];
   const actions: string[] = [];
   const publications: PublicationSummary[] = [];
+  const accountBindings = createAccountBindings();
+  const legacyApplication = {
+    listPlatforms: () => [
+      {
+        id: "douyin",
+        displayName: "抖音",
+        entryUrl: "https://creator.douyin.com/",
+        rulesVersion: "1",
+        implementationStatus: "live-tested" as const,
+        loginEntries: [
+          {
+            id: "creator",
+            displayName: "创作者中心",
+            url: "https://creator.douyin.com/",
+          },
+        ],
+        publishCapabilities: [],
+      },
+    ],
+    listAccounts: () => [...accounts],
+    listPublications: () => [...publications],
+    prepareRemoteDraft: async (request: {
+      accountId: string;
+      requestId: string;
+      contentForm: "video" | "imageText";
+      title: string;
+      body: string;
+    }) => {
+      actions.push(`publish:${request.requestId}`);
+      if (options?.publicationBusy) {
+        return { status: "account_busy" as const };
+      }
+      publications.push({
+        id: "publication-1",
+        requestId: request.requestId,
+        platformId: "douyin",
+        accountId: request.accountId,
+        contentForm: request.contentForm,
+        title: request.title,
+        body: request.body,
+        assets: [{ name: "video.mp4", size: 42 }],
+        state: "submitting",
+        transitions: [],
+        rulesVersion: "test",
+        retained: false,
+        createdAt: "2026-08-10T00:00:00.000Z",
+        updatedAt: "2026-08-10T00:00:00.000Z",
+        lastMessage: "已提交",
+        platformContentId: null,
+        platformContentUrl: null,
+      });
+      return {
+        status: "submission_started" as const,
+        mediaCount: 1,
+        profileId: "profile-1",
+        publishObservationId: "observation-1",
+        publicationId: "publication-1",
+      };
+    },
+    createAccount: ({ platformId }: { platformId: string }) => {
+      if (platformId !== "douyin") throw new TypeError("Unknown platform");
+      const created: PlatformAccountSummary = {
+        ...account,
+        id: `account-${accounts.length + 1}`,
+        externalAccountId: null,
+        nickname: null,
+        status: "login_required",
+      };
+      accounts.push(created);
+      actions.push(`create:${platformId}`);
+      return created;
+    },
+    openLogin: async ({ accountId }: { accountId: string }) => {
+      actions.push(`login:${accountId}`);
+      return { profileId: `profile:${accountId}` };
+    },
+    openAccount: async ({ accountId }: { accountId: string }) => {
+      actions.push(`open:${accountId}`);
+      return {
+        profileId: `profile:${accountId}`,
+        sessionId: `session:${accountId}`,
+      };
+    },
+    refreshAccount: async ({ accountId }: { accountId: string }) => {
+      actions.push(`refresh:${accountId}`);
+      const stored = accounts.find((candidate) => candidate.id === accountId);
+      if (!stored) throw new TypeError("Platform account does not exist");
+      stored.status = "authenticated";
+      stored.externalAccountId = "refreshed-external";
+      stored.nickname = "刷新后的账号";
+      stored.accountInfo = [{ key: "follower_count", value: 25600 }];
+      return {
+        status: "authenticated" as const,
+        externalAccountId: stored.externalAccountId,
+        nickname: stored.nickname,
+        avatarUrl: null,
+        accountInfo: [{ key: "follower_count", value: 25600 }],
+        source: "api" as const,
+      };
+    },
+    verifyAccount: async ({ accountId }: { accountId: string }) => {
+      actions.push(`verify:${accountId}`);
+      const stored = accounts.find((candidate) => candidate.id === accountId);
+      if (!stored) throw new TypeError("Platform account does not exist");
+      if (options?.verificationMismatch) {
+        stored.status = "unknown";
+        return {
+          status: "unknown" as const,
+          reason: "Runtime account identity changed",
+        };
+      }
+      stored.status = "authenticated";
+      return {
+        status: "authenticated" as const,
+        externalAccountId: stored.externalAccountId!,
+        nickname: stored.nickname!,
+        avatarUrl: stored.avatarUrl,
+        accountInfo: stored.accountInfo ?? [],
+        source: "api" as const,
+      };
+    },
+    removeAccount: async ({ accountId }: { accountId: string }) => {
+      actions.push(`remove:${accountId}`);
+      const index = accounts.findIndex(
+        (candidate) => candidate.id === accountId,
+      );
+      if (index === -1) throw new TypeError("Platform account does not exist");
+      accounts.splice(index, 1);
+      accountBindings.store.removeForRuntimeAccount(accountId);
+    },
+  };
   return {
     accounts,
     actions,
     publications,
+    accountBindings,
     application: {
-      listPlatforms: () => [
-        {
-          id: "douyin",
-          displayName: "抖音",
-          entryUrl: "https://creator.douyin.com/",
-          rulesVersion: "1",
-          implementationStatus: "live-tested" as const,
-          loginEntries: [
-            {
-              id: "creator",
-              displayName: "创作者中心",
-              url: "https://creator.douyin.com/",
-            },
-          ],
-          publishCapabilities: [],
-        },
-      ],
-      listAccounts: () => [...accounts],
-      listPublications: () => [...publications],
-      prepareRemoteDraft: async (request: {
-        accountId: string;
-        requestId: string;
-        contentForm: "video" | "imageText";
-        title: string;
-        body: string;
-      }) => {
-        actions.push(`publish:${request.requestId}`);
-        if (options?.publicationBusy) {
-          return { status: "account_busy" as const };
-        }
-        publications.push({
-          id: "publication-1",
-          requestId: request.requestId,
-          platformId: "douyin",
-          accountId: request.accountId,
-          contentForm: request.contentForm,
-          title: request.title,
-          body: request.body,
-          assets: [{ name: "video.mp4", size: 42 }],
-          state: "submitting",
-          transitions: [],
-          rulesVersion: "test",
-          retained: false,
-          createdAt: "2026-08-10T00:00:00.000Z",
-          updatedAt: "2026-08-10T00:00:00.000Z",
-          lastMessage: "已提交",
-          platformContentId: null,
-          platformContentUrl: null,
-        });
-        return {
-          status: "submission_started" as const,
-          mediaCount: 1,
-          profileId: "profile-1",
-          publishObservationId: "observation-1",
-          publicationId: "publication-1",
-        };
+      accounts: {
+        listPlatforms: legacyApplication.listPlatforms,
+        list: legacyApplication.listAccounts,
+        create: legacyApplication.createAccount,
+        openLogin: legacyApplication.openLogin,
+        open: legacyApplication.openAccount,
+        refresh: legacyApplication.refreshAccount,
+        verify: legacyApplication.verifyAccount,
+        remove: legacyApplication.removeAccount,
       },
-      createAccount: ({ platformId }: { platformId: string }) => {
-        if (platformId !== "douyin") throw new TypeError("Unknown platform");
-        const created: PlatformAccountSummary = {
-          ...account,
-          id: `account-${accounts.length + 1}`,
-          externalAccountId: null,
-          nickname: null,
-          status: "login_required",
-        };
-        accounts.push(created);
-        actions.push(`create:${platformId}`);
-        return created;
-      },
-      openLogin: async ({ accountId }: { accountId: string }) => {
-        actions.push(`login:${accountId}`);
-        return { profileId: `profile:${accountId}` };
-      },
-      openAccount: async ({ accountId }: { accountId: string }) => {
-        actions.push(`open:${accountId}`);
-        return {
-          profileId: `profile:${accountId}`,
-          sessionId: `session:${accountId}`,
-        };
-      },
-      refreshAccount: async ({ accountId }: { accountId: string }) => {
-        actions.push(`refresh:${accountId}`);
-        const stored = accounts.find((candidate) => candidate.id === accountId);
-        if (!stored) throw new TypeError("Platform account does not exist");
-        stored.status = "authenticated";
-        stored.externalAccountId = "refreshed-external";
-        stored.nickname = "刷新后的账号";
-        stored.accountInfo = [{ key: "follower_count", value: 25600 }];
-        return {
-          status: "authenticated" as const,
-          externalAccountId: stored.externalAccountId,
-          nickname: stored.nickname,
-          avatarUrl: null,
-          accountInfo: [{ key: "follower_count", value: 25600 }],
-          source: "api" as const,
-        };
-      },
-      verifyAccount: async ({ accountId }: { accountId: string }) => {
-        actions.push(`verify:${accountId}`);
-        const stored = accounts.find((candidate) => candidate.id === accountId);
-        if (!stored) throw new TypeError("Platform account does not exist");
-        if (options?.verificationMismatch) {
-          stored.status = "unknown";
-          return {
-            status: "unknown" as const,
-            reason: "Runtime account identity changed",
+      accountBindings: {
+        list: () => accountBindings.store.list(),
+        bind: (command: {
+          platformAccountId: string;
+          runtimeAccountId: string;
+        }) => {
+          const account = accounts.find(
+            (candidate) => candidate.id === command.runtimeAccountId,
+          );
+          if (!account) throw new TypeError("Runtime account does not exist");
+          if (!account.externalAccountId) {
+            throw new TypeError(
+              "Runtime account does not have a stable identity",
+            );
+          }
+          const binding = {
+            platformAccountId: command.platformAccountId,
+            runtimeAccountId: account.id,
+            platform: account.platformId,
+            externalAccountId: account.externalAccountId,
+            boundAt: "2026-08-10T01:00:00.000Z",
           };
-        }
-        stored.status = "authenticated";
-        return {
-          status: "authenticated" as const,
-          externalAccountId: stored.externalAccountId!,
-          nickname: stored.nickname!,
-          avatarUrl: stored.avatarUrl,
-          accountInfo: stored.accountInfo ?? [],
-          source: "api" as const,
-        };
+          accountBindings.store.put(binding);
+          return binding;
+        },
+        verify: async (query: {
+          platformAccountId: string;
+          runtimeAccountId?: string;
+          platform?: string;
+        }) => {
+          const binding = accountBindings.store
+            .list()
+            .find(
+              (candidate) =>
+                candidate.platformAccountId === query.platformAccountId,
+            );
+          if (!binding) throw new Error("Account binding does not exist");
+          const detected = await legacyApplication.verifyAccount({
+            accountId: binding.runtimeAccountId,
+          });
+          if (detected.status !== "authenticated") {
+            const error = new Error(
+              detected.status === "unknown"
+                ? detected.reason
+                : "Runtime account is not authenticated",
+            ) as Error & {
+              code: "ACCOUNT_IDENTITY_MISMATCH" | "NOT_LOGGED_IN";
+            };
+            error.code =
+              detected.status === "unknown"
+                ? "ACCOUNT_IDENTITY_MISMATCH"
+                : "NOT_LOGGED_IN";
+            throw error;
+          }
+          const verified = accounts.find(
+            (candidate) => candidate.id === binding.runtimeAccountId,
+          );
+          if (!verified) throw new Error("Runtime account does not exist");
+          return { account: verified, binding };
+        },
+        removeForRuntimeAccount: (runtimeAccountId: string) =>
+          accountBindings.store.removeForRuntimeAccount(runtimeAccountId),
       },
-      removeAccount: async ({ accountId }: { accountId: string }) => {
-        actions.push(`remove:${accountId}`);
-        const index = accounts.findIndex(
-          (candidate) => candidate.id === accountId,
-        );
-        if (index === -1)
-          throw new TypeError("Platform account does not exist");
-        accounts.splice(index, 1);
+      publications: {
+        list: legacyApplication.listPublications,
+        publicationUrl: () => {
+          throw new Error("not used");
+        },
+        prepareRemote: legacyApplication.prepareRemoteDraft,
+        prepare: () => {
+          throw new Error("not used");
+        },
       },
     },
   };
@@ -251,55 +338,43 @@ describe("LocalRuntimeServer", () => {
     await Promise.all(servers.splice(0).map((server) => server.stop()));
   });
 
-  it("keeps a query-free diagnostic log that can be cleared", async () => {
+  it("reports whether the local runtime is listening", async () => {
     const runtime = createRuntimeApplication([]);
     const server = new LocalRuntimeServer({
       application: runtime.application,
-      accountBindings: createAccountBindings().store,
       handshake,
       port: 0,
     });
     servers.push(server);
+    expect(server.status()).toEqual({
+      status: "stopped",
+      version: handshake.runtimeVersion,
+      host: "127.0.0.1",
+      port: null,
+    });
+
     const port = await server.start();
-
-    await fetch(`http://127.0.0.1:${port}/v1/runtime?token=not-logged`, {
-      headers: { Origin: origin },
-    });
-    await fetch(`http://127.0.0.1:${port}/v1/accounts`, {
-      headers: { Origin: origin },
-    });
-
-    expect(server.diagnostics()).toMatchObject({
+    expect(server.status()).toEqual({
       status: "running",
+      version: handshake.runtimeVersion,
       host: "127.0.0.1",
       port,
-      requests: [
-        {
-          method: "GET",
-          path: "/v1/accounts",
-          statusCode: 200,
-          origin,
-          errorCode: null,
-        },
-        {
-          method: "GET",
-          path: "/v1/runtime",
-          statusCode: 200,
-          origin,
-          errorCode: null,
-        },
-      ],
     });
 
-    server.clearRequestLogs();
-    expect(server.diagnostics().requests).toEqual([]);
+    await server.stop();
+    expect(server.status()).toMatchObject({ status: "stopped", port: null });
+
+    const restartedPort = await server.start();
+    expect(server.status()).toMatchObject({
+      status: "running",
+      port: restartedPort,
+    });
   });
 
   it("discovers the runtime and exposes accounts without authorization", async () => {
     const runtime = createRuntimeApplication();
     const server = new LocalRuntimeServer({
       application: runtime.application,
-      accountBindings: createAccountBindings().store,
       handshake,
       port: 0,
     });
@@ -345,12 +420,10 @@ describe("LocalRuntimeServer", () => {
 
   it("persists an explicit server-channel to local-runtime account binding", async () => {
     const runtime = createRuntimeApplication();
-    const accountBindings = createAccountBindings();
+    const accountBindings = runtime.accountBindings;
     const server = new LocalRuntimeServer({
       application: runtime.application,
-      accountBindings: accountBindings.store,
       handshake,
-      now: () => new Date("2026-08-10T01:00:00.000Z"),
       port: 0,
     });
     servers.push(server);
@@ -383,10 +456,9 @@ describe("LocalRuntimeServer", () => {
 
   it("creates, opens, refreshes, and removes an isolated account", async () => {
     const runtime = createRuntimeApplication([]);
-    const accountBindings = createAccountBindings();
+    const accountBindings = runtime.accountBindings;
     const server = new LocalRuntimeServer({
       application: runtime.application,
-      accountBindings: accountBindings.store,
       handshake,
       port: 0,
     });
@@ -455,7 +527,7 @@ describe("LocalRuntimeServer", () => {
     const runtime = createRuntimeApplication([account], {
       verificationMismatch: true,
     });
-    const accountBindings = createAccountBindings();
+    const accountBindings = runtime.accountBindings;
     accountBindings.store.put({
       platformAccountId: "platform-account-1",
       runtimeAccountId: account.id,
@@ -465,7 +537,6 @@ describe("LocalRuntimeServer", () => {
     });
     const server = new LocalRuntimeServer({
       application: runtime.application,
-      accountBindings: accountBindings.store,
       handshake,
       port: 0,
     });
@@ -523,7 +594,7 @@ describe("LocalRuntimeServer", () => {
 
   it("creates a bound publication once and restores its final status by request id", async () => {
     const runtime = createRuntimeApplication();
-    const accountBindings = createAccountBindings();
+    const accountBindings = runtime.accountBindings;
     accountBindings.store.put({
       platformAccountId: "platform-account-1",
       runtimeAccountId: account.id,
@@ -533,7 +604,6 @@ describe("LocalRuntimeServer", () => {
     });
     const server = new LocalRuntimeServer({
       application: runtime.application,
-      accountBindings: accountBindings.store,
       handshake,
       port: 0,
     });
@@ -612,7 +682,7 @@ describe("LocalRuntimeServer", () => {
     const runtime = createRuntimeApplication([account], {
       publicationBusy: true,
     });
-    const accountBindings = createAccountBindings();
+    const accountBindings = runtime.accountBindings;
     accountBindings.store.put({
       platformAccountId: "platform-account-1",
       runtimeAccountId: account.id,
@@ -622,7 +692,6 @@ describe("LocalRuntimeServer", () => {
     });
     const server = new LocalRuntimeServer({
       application: runtime.application,
-      accountBindings: accountBindings.store,
       handshake,
       port: 0,
     });
@@ -663,7 +732,6 @@ describe("LocalRuntimeServer", () => {
     const runtime = createRuntimeApplication([]);
     const server = new LocalRuntimeServer({
       application: runtime.application,
-      accountBindings: createAccountBindings().store,
       handshake,
       port: 0,
     });

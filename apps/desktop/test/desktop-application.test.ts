@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { StartPublicationInput } from "@nedia-matrix/application-publishing";
 import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
 
-import { DesktopDistributionApplication } from "../src/main/desktop-application.js";
+import { NediaMatrixApplication } from "../src/main/application/nedia-matrix-application.js";
 import { AccountPublicationLock } from "../src/main/publishing/account-publication-lock.js";
 import { MediaSelectionUnavailableError } from "../src/main/publishing/media-selection-store.js";
 
 function createDependencies() {
   const accounts = new Map<string, PlatformAccountSummary>();
-  const accountUpdates: PlatformAccountSummary[] = [];
+  const accountUpdates: number[] = [];
   return {
     accounts,
     accountUpdates,
@@ -27,6 +27,11 @@ function createDependencies() {
         remove: (accountId: string) => {
           accounts.delete(accountId);
         },
+      },
+      accountBindings: {
+        list: () => [],
+        put: () => undefined,
+        removeForRuntimeAccount: () => undefined,
       },
       browserSessions: {
         openForLogin: async () => undefined,
@@ -82,8 +87,11 @@ function createDependencies() {
       },
       createId: () => "account-1",
       now: () => new Date("2026-08-10T00:00:00.000Z"),
-      onAccountUpdated: (account: PlatformAccountSummary) =>
-        accountUpdates.push(account),
+      eventSink: {
+        publish: (event: { type: string }) => {
+          if (event.type === "accounts.changed") accountUpdates.push(1);
+        },
+      },
     },
   };
 }
@@ -296,12 +304,12 @@ function createPublishFixture(options?: {
   };
 }
 
-describe("DesktopDistributionApplication", () => {
+describe("NediaMatrixApplication", () => {
   it("creates an isolated account through a transport-independent use case", () => {
     const { dependencies } = createDependencies();
-    const application = new DesktopDistributionApplication(dependencies);
+    const application = new NediaMatrixApplication(dependencies);
 
-    const account = application.createAccount({ platformId: "douyin" });
+    const account = application.accounts.create({ platformId: "douyin" });
 
     expect(account).toMatchObject({
       id: "account-1",
@@ -310,14 +318,14 @@ describe("DesktopDistributionApplication", () => {
       status: "login_required",
       createdAt: "2026-08-10T00:00:00.000Z",
     });
-    expect(application.listAccounts()).toEqual([account]);
+    expect(application.accounts.list()).toEqual([account]);
   });
 
   it("validates account creation before mutating the store", () => {
     const { accounts, dependencies } = createDependencies();
-    const application = new DesktopDistributionApplication(dependencies);
+    const application = new NediaMatrixApplication(dependencies);
 
-    expect(() => application.createAccount({ platformId: "" })).toThrow(
+    expect(() => application.accounts.create({ platformId: "" })).toThrow(
       "Invalid platform request",
     );
     expect(accounts.size).toBe(0);
@@ -325,11 +333,9 @@ describe("DesktopDistributionApplication", () => {
 
   it("persists submitting and arms observation before automatic submit", async () => {
     const { actions, dependencies } = createPublishFixture();
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
-    const result = await application.prepareDraft({
+    const result = await application.publications.prepare({
       accountId: "account-1",
       contentForm: "imageText",
       mediaSelectionId: "selection-1",
@@ -351,11 +357,9 @@ describe("DesktopDistributionApplication", () => {
 
   it("keeps manual confirmation before the submit workflow", async () => {
     const { actions, dependencies } = createPublishFixture();
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
-    const result = await application.prepareDraft({
+    const result = await application.publications.prepare({
       accountId: "account-1",
       contentForm: "imageText",
       mediaSelectionId: "selection-1",
@@ -379,11 +383,9 @@ describe("DesktopDistributionApplication", () => {
   it("composes Kuaishou title, body, and tags into a manual-review description", async () => {
     const { actions, dependencies, prepareWorkflowInputs } =
       createPublishFixture({ platformId: "kuaishou", contentForm: "video" });
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
-    const result = await application.prepareDraft({
+    const result = await application.publications.prepare({
       accountId: "account-1",
       contentForm: "video",
       mediaSelectionId: "selection-1",
@@ -405,12 +407,10 @@ describe("DesktopDistributionApplication", () => {
       platformId: "kuaishou",
       contentForm: "video",
     });
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
     await expect(
-      application.prepareDraft({
+      application.publications.prepare({
         accountId: "account-1",
         contentForm: "video",
         mediaSelectionId: "selection-1",
@@ -436,12 +436,10 @@ describe("DesktopDistributionApplication", () => {
       contentForm: "video",
       mediaSelectionUnavailable: true,
     });
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
     await expect(
-      application.prepareDraft({
+      application.publications.prepare({
         accountId: "account-1",
         contentForm: "video",
         mediaSelectionId: "expired-selection",
@@ -464,12 +462,10 @@ describe("DesktopDistributionApplication", () => {
         platformId: "kuaishou",
         contentForm: "imageText",
       });
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
     await expect(
-      application.prepareDraft({
+      application.publications.prepare({
         accountId: "account-1",
         contentForm: "imageText",
         mediaSelectionId: "selection-1",
@@ -490,12 +486,10 @@ describe("DesktopDistributionApplication", () => {
       platformId: "kuaishou",
       contentForm: "imageText",
     });
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
     await expect(
-      application.prepareDraft({
+      application.publications.prepare({
         accountId: "account-1",
         contentForm: "imageText",
         mediaSelectionId: "selection-1",
@@ -518,11 +512,9 @@ describe("DesktopDistributionApplication", () => {
   it("persists normalized tags and sends native topic inputs to the workflow", async () => {
     const { dependencies, preparationInput, prepareWorkflowInputs } =
       createPublishFixture();
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
-    await application.prepareDraft({
+    await application.publications.prepare({
       accountId: "account-1",
       contentForm: "imageText",
       mediaSelectionId: "selection-1",
@@ -539,9 +531,7 @@ describe("DesktopDistributionApplication", () => {
 
   it("rejects a second publication while the same account is active", async () => {
     const { dependencies, finishObservation } = createPublishFixture();
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
     const request = {
       accountId: "account-1",
       contentForm: "imageText" as const,
@@ -550,16 +540,18 @@ describe("DesktopDistributionApplication", () => {
       body: "正文",
     };
 
-    await expect(application.prepareDraft(request)).resolves.toMatchObject({
+    await expect(
+      application.publications.prepare(request),
+    ).resolves.toMatchObject({
       status: "submission_started",
     });
     await expect(
-      application.prepareDraft({ ...request, requestId: "request-2" }),
+      application.publications.prepare({ ...request, requestId: "request-2" }),
     ).resolves.toEqual({ status: "account_busy" });
 
     finishObservation();
     await expect(
-      application.prepareDraft({ ...request, requestId: "request-3" }),
+      application.publications.prepare({ ...request, requestId: "request-3" }),
     ).resolves.toMatchObject({ status: "submission_started" });
   });
 
@@ -568,12 +560,10 @@ describe("DesktopDistributionApplication", () => {
       createPublishFixture({
         detectedExternalAccountId: "external-2",
       });
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
     await expect(
-      application.prepareDraft({
+      application.publications.prepare({
         accountId: "account-1",
         requestId: "request-1",
         contentForm: "imageText",
@@ -602,11 +592,11 @@ describe("DesktopDistributionApplication", () => {
       accountInfo: [],
       source: "api" as const,
     });
-    const retriedApplication = new DesktopDistributionApplication(
+    const retriedApplication = new NediaMatrixApplication(
       dependencies as never,
     );
     await expect(
-      retriedApplication.prepareDraft({
+      retriedApplication.publications.prepare({
         accountId: "account-1",
         requestId: "request-2",
         contentForm: "imageText",
@@ -627,11 +617,9 @@ describe("DesktopDistributionApplication", () => {
       accountInfo: [{ key: "follower_count" as const, value: 25600 }],
       source: "api" as const,
     });
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
-    await application.prepareDraft({
+    await application.publications.prepare({
       accountId: "account-1",
       contentForm: "imageText",
       mediaSelectionId: "selection-1",
@@ -652,10 +640,8 @@ describe("DesktopDistributionApplication", () => {
 
   it("discards downloaded assets when the account is already publishing", async () => {
     const { actions, dependencies } = createPublishFixture();
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
-    await application.prepareDraft({
+    const application = new NediaMatrixApplication(dependencies as never);
+    await application.publications.prepare({
       accountId: "account-1",
       requestId: "request-1",
       contentForm: "imageText",
@@ -665,7 +651,7 @@ describe("DesktopDistributionApplication", () => {
     });
     actions.splice(0);
 
-    const result = await application.prepareRemoteDraft({
+    const result = await application.publications.prepareRemote({
       accountId: "account-1",
       requestId: "request-2",
       contentForm: "imageText",
@@ -695,11 +681,9 @@ describe("DesktopDistributionApplication", () => {
     const { actions, dependencies } = createPublishFixture({
       failSubmit: true,
     });
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
-    const result = await application.prepareDraft({
+    const result = await application.publications.prepare({
       accountId: "account-1",
       contentForm: "imageText",
       mediaSelectionId: "selection-1",
@@ -717,11 +701,9 @@ describe("DesktopDistributionApplication", () => {
 
   it("downloads remote assets into the existing automatic publish workflow", async () => {
     const { actions, dependencies, preparationInput } = createPublishFixture();
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
-    const result = await application.prepareRemoteDraft({
+    const result = await application.publications.prepareRemote({
       accountId: "account-1",
       requestId: "request-1",
       contentForm: "imageText",
@@ -761,11 +743,9 @@ describe("DesktopDistributionApplication", () => {
       createPublishFixture({
         loginRequired: true,
       });
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
-    const result = await application.prepareRemoteDraft({
+    const result = await application.publications.prepareRemote({
       accountId: "account-1",
       requestId: "request-1",
       contentForm: "imageText",
@@ -797,11 +777,9 @@ describe("DesktopDistributionApplication", () => {
     const { actions, dependencies } = createPublishFixture({
       existingPublication: true,
     });
-    const application = new DesktopDistributionApplication(
-      dependencies as never,
-    );
+    const application = new NediaMatrixApplication(dependencies as never);
 
-    const result = await application.prepareRemoteDraft({
+    const result = await application.publications.prepareRemote({
       accountId: "account-1",
       requestId: "request-1",
       contentForm: "imageText",

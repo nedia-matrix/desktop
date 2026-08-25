@@ -2,6 +2,8 @@
   "extends": "@nedia-matrix/tsconfig/base.json",
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "types": ["vite/client"]
   },
   "include": ["src/renderer"]

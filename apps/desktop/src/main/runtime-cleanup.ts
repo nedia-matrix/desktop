@@ -13,6 +13,7 @@ interface AccountRemovalDependencies extends AccountCleanupDependencies {
   browserSessions: {
     remove(account: PlatformAccountSummary): Promise<void>;
   };
+  beforeAccountRemove?: (() => void | Promise<void>) | undefined;
   accountStore: {
     remove(accountId: string): void;
   };
@@ -47,6 +48,7 @@ export async function removeAccountAndResources(
   dependencies.publishObservations.stop(account.id);
   dependencies.mediaSelections.removeForAccount(account.id);
   await dependencies.browserSessions.remove(account);
+  await dependencies.beforeAccountRemove?.();
   dependencies.accountStore.remove(account.id);
 }
 
