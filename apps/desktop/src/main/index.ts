@@ -11,6 +11,8 @@ import {
   NediaMatrixApplication,
   type ApplicationEventSink,
 } from "./application/nedia-matrix-application.js";
+import { ApplicationLifecycle } from "./application-lifecycle.js";
+import { installApplicationMenu } from "./application-menu.js";
 import { ApplicationTray } from "./application-tray.js";
 import { MainWindowHost } from "./main-window-host.js";
 import {
@@ -85,13 +87,40 @@ const browserSessions = new BrowserProfileHost((accountId) => {
 });
 
 let localRuntimeServer: LocalRuntimeServer | null = null;
+const SHUTDOWN_TIMEOUT_MS = 5_000;
+const applicationLifecycle = new ApplicationLifecycle();
+let quitAllowed = false;
+
+function showDockIcon(): void {
+  if (process.platform !== "darwin") return;
+  const dock = app.dock;
+  if (!dock || dock.isVisible()) return;
+  void dock.show().catch((error: unknown) => {
+    console.error("Failed to show the application in the Dock", error);
+  });
+}
+
+function hideDockIcon(): void {
+  if (process.platform !== "darwin") return;
+  app.dock?.hide();
+}
+
+function openMainWindow(): void {
+  if (applicationLifecycle.requestWindowOpen() === "relaunch-after-shutdown") {
+    // The current process still owns the single-instance lock while it cleans up.
+    // Relaunch after it exits instead of opening a window that is about to close.
+    return;
+  }
+  showDockIcon();
+  mainWindow.open();
+}
 
 function acceptOpenUrl(value: string): void {
   if (!isNediaMatrixOpenUrl(value)) {
     console.warn("Ignored invalid nedia-matrix protocol URL");
     return;
   }
-  if (app.isReady()) mainWindow.open();
+  if (app.isReady()) openMainWindow();
 }
 
 app.on("open-url", (event, value) => {
@@ -101,23 +130,58 @@ app.on("open-url", (event, value) => {
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
-  app.quit();
+  // This process has already notified the primary instance. It must not remain as
+  // a ready-less Electron process with no window, tray, or local runtime.
+  app.exit(0);
 } else {
   app.on("second-instance", (_event, commandLine) => {
     const openUrl = findNediaMatrixOpenUrl(commandLine);
     if (openUrl) acceptOpenUrl(openUrl);
-    if (app.isReady()) mainWindow.open();
+    if (app.isReady()) openMainWindow();
   });
 }
 
-const SHUTDOWN_TIMEOUT_MS = 5_000;
-let shutdownStarted = false;
-let quitAllowed = false;
 const publicationRetryTimer = setInterval(
   () => publicationObservations.retryPending(),
   5_000,
 );
 publicationRetryTimer.unref();
+
+function requestApplicationQuit(): void {
+  if (!applicationLifecycle.beginShutdown()) return;
+  publicationObservations.retryPending();
+  clearInterval(publicationRetryTimer);
+  const shutdown = shutdownDesktopRuntime({
+    browserSessions,
+    mediaSelections,
+    publishObservations,
+  }).then(() => localRuntimeServer?.stop());
+
+  void waitForShutdown(shutdown, SHUTDOWN_TIMEOUT_MS)
+    .then((result) => {
+      if (result === "timed-out") {
+        console.warn(
+          `Desktop shutdown exceeded ${SHUTDOWN_TIMEOUT_MS}ms; quitting without waiting for remaining cleanup`,
+        );
+      }
+    })
+    .catch((error: unknown) => {
+      console.error("Failed to cleanly shut down desktop runtime", error);
+    })
+    .finally(() => {
+      applicationTray?.destroy();
+      if (applicationLifecycle.shouldRelaunchAfterShutdown()) {
+        // Cleanup has stopped the local server, so ownership can safely pass to the
+        // replacement process before this process exits.
+        app.releaseSingleInstanceLock();
+        app.relaunch();
+        app.exit(0);
+        return;
+      }
+      quitAllowed = true;
+      app.quit();
+    });
+}
 
 void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
   .then(() => {
@@ -194,52 +258,28 @@ void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
       console.error("Failed to start local runtime server", error);
     });
 
+    installApplicationMenu({ quitApplication: requestApplicationQuit });
     applicationTray = new ApplicationTray({
-      openMainWindow: () => mainWindow.open(),
-      quitApplication: () => app.quit(),
+      openMainWindow,
+      quitApplication: requestApplicationQuit,
     });
 
     const initialOpenUrl = findNediaMatrixOpenUrl(process.argv);
     if (initialOpenUrl) acceptOpenUrl(initialOpenUrl);
-    mainWindow.open();
-    app.on("activate", () => mainWindow.open());
+    openMainWindow();
+    app.on("activate", openMainWindow);
   })
   .catch((error: unknown) => {
     console.error("Failed to initialize Electron", error);
-    app.quit();
+    app.exit(1);
   });
 
 app.on("window-all-closed", () => {
-  // The main process, tray, and local HTTP runtime intentionally stay alive.
+  hideDockIcon();
 });
 
 app.on("before-quit", (event) => {
   if (quitAllowed) return;
   event.preventDefault();
-  if (shutdownStarted) return;
-  shutdownStarted = true;
-  publicationObservations.retryPending();
-  clearInterval(publicationRetryTimer);
-  const shutdown = shutdownDesktopRuntime({
-    browserSessions,
-    mediaSelections,
-    publishObservations,
-  }).then(() => localRuntimeServer?.stop());
-
-  void waitForShutdown(shutdown, SHUTDOWN_TIMEOUT_MS)
-    .then((result) => {
-      if (result === "timed-out") {
-        console.warn(
-          `Desktop shutdown exceeded ${SHUTDOWN_TIMEOUT_MS}ms; quitting without waiting for remaining cleanup`,
-        );
-      }
-    })
-    .catch((error: unknown) => {
-      console.error("Failed to cleanly shut down desktop runtime", error);
-    })
-    .finally(() => {
-      applicationTray?.destroy();
-      quitAllowed = true;
-      app.quit();
-    });
+  requestApplicationQuit();
 });

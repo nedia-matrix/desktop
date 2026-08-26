@@ -1,7 +1,7 @@
 {
   "name": "@nedia-matrix/desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -50,7 +50,11 @@
     "extraResources": [
       {
         "from": "resources/logo.png",
-        "to": "tray-icon.png"
+        "to": "logo.png"
+      },
+      {
+        "from": "resources/mac-tray.png",
+        "to": "mac-tray.png"
       }
     ],
     "mac": {

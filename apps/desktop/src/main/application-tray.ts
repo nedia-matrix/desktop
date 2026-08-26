@@ -11,9 +11,10 @@ export class ApplicationTray {
   private readonly tray: Tray;
 
   constructor(actions: ApplicationTrayActions) {
+    const iconFilename = process.platform === "darwin" ? "mac-tray.png" : "logo.png";
     const iconPath = app.isPackaged
-      ? join(process.resourcesPath, "tray-icon.png")
-      : join(app.getAppPath(), "resources", "logo.png");
+      ? join(process.resourcesPath, iconFilename)
+      : join(app.getAppPath(), "resources", iconFilename);
     const icon = nativeImage.createFromPath(iconPath);
     if (icon.isEmpty()) {
       throw new Error(`Failed to load tray icon: ${iconPath}`);
