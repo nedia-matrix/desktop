@@ -139,6 +139,30 @@ describe("Xiaohongshu result monitor", () => {
     expect(closingEvents.at(-1)?.kind).toBe("uncertain");
   });
 
+  it("does not hold the account forever when submission produces no signal", async () => {
+    vi.useFakeTimers();
+    const fake = fakeSession();
+    const monitor = createXiaohongshuPublishResultMonitor({
+      contentForm: "imageText",
+      session: fake.session,
+      clock,
+      diagnostics: diagnostics(),
+    });
+    const events: PublishResultEvent[] = [];
+    monitor.subscribe((event) => events.push(event));
+    await monitor.ready();
+    monitor.arm();
+
+    await vi.advanceTimersByTimeAsync(100_000);
+
+    expect(events).toEqual([
+      {
+        kind: "uncertain",
+        message: "点击发布后平台未返回受理信号，请先核对笔记管理页",
+      },
+    ]);
+  });
+
   it("ignores responses that arrived before arming even if processed later", async () => {
     const fake = fakeSession();
     const monitor = createXiaohongshuPublishResultMonitor({

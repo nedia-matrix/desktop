@@ -21,6 +21,23 @@ export const workflowStepSchema = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("click"), targetId: z.string().min(1) }),
   z.object({
+    kind: z.literal("click-position"),
+    targetId: z.string().min(1),
+    xRatio: z.number().min(0).max(1),
+    yRatio: z.number().min(0).max(1),
+  }),
+  z.object({
+    kind: z.literal("click-if-present"),
+    targetId: z.string().min(1),
+    timeoutMs: z.number().int().nonnegative().default(3_000),
+  }),
+  z.object({
+    kind: z.literal("click-closed-shadow"),
+    targetId: z.string().min(1),
+    descendantTag: z.string().regex(/^[A-Za-z][A-Za-z0-9-]*$/),
+    descendantClass: z.string().regex(/^-?[_A-Za-z]+[_A-Za-z0-9-]*$/),
+  }),
+  z.object({
     kind: z.literal("fill"),
     targetId: z.string().min(1),
     inputKey: z.string().min(1),
@@ -138,6 +155,9 @@ function inputRequirements(
         ]);
         break;
       case "click":
+      case "click-position":
+      case "click-if-present":
+      case "click-closed-shadow":
       case "wait-for-state":
         break;
     }

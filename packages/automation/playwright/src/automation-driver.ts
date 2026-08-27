@@ -16,8 +16,59 @@ import { isAllowedPlatformNavigation } from "./navigation-policy.js";
 
 const MAX_ELEMENT_REFERENCES = 500;
 const MAX_QUERY_MATCHES = 100;
+const SHADOW_CLICK_MARKER = "data-nedia-shadow-click";
 
 type LocatorRoot = Page | Locator;
+
+interface CdpDomNode {
+  nodeId: number;
+  nodeName: string;
+  attributes?: string[];
+  children?: CdpDomNode[];
+  shadowRoots?: CdpDomNode[];
+}
+
+function attribute(node: CdpDomNode, name: string): string | null {
+  const attributes = node.attributes ?? [];
+  for (let index = 0; index < attributes.length; index += 2) {
+    if (attributes[index] === name) return attributes[index + 1] ?? "";
+  }
+  return null;
+}
+
+function walkDom(
+  node: CdpDomNode,
+  visitor: (candidate: CdpDomNode) => boolean,
+): CdpDomNode | null {
+  if (visitor(node)) return node;
+  for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? [])]) {
+    const match = walkDom(child, visitor);
+    if (match) return match;
+  }
+  return null;
+}
+
+export function findClosedShadowDescendant(
+  root: CdpDomNode,
+  marker: string,
+  descendantTag: string,
+  descendantClass: string,
+): CdpDomNode | null {
+  const host = walkDom(
+    root,
+    (node) => attribute(node, SHADOW_CLICK_MARKER) === marker,
+  );
+  if (!host) return null;
+  const tag = descendantTag.toUpperCase();
+  const matches = (node: CdpDomNode): boolean =>
+    node.nodeName === tag &&
+    (attribute(node, "class") ?? "").split(/\s+/).includes(descendantClass);
+  for (const shadowRoot of host.shadowRoots ?? []) {
+    const match = walkDom(shadowRoot, matches);
+    if (match) return match;
+  }
+  return null;
+}
 
 function locatorForCandidate(
   root: LocatorRoot,
@@ -169,6 +220,68 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
 
   async click(target: ElementReference): Promise<void> {
     await this.locatorFor(target).click();
+  }
+
+  async clickAtPosition(
+    target: ElementReference,
+    xRatio: number,
+    yRatio: number,
+  ): Promise<void> {
+    const locator = this.locatorFor(target);
+    await locator.scrollIntoViewIfNeeded();
+    const box = await locator.boundingBox();
+    if (!box || box.width <= 0 || box.height <= 0) {
+      throw new Error("target_has_no_clickable_box");
+    }
+    await this.page.mouse.click(
+      box.x + box.width * xRatio,
+      box.y + box.height * yRatio,
+    );
+  }
+
+  async clickClosedShadowDescendant(
+    target: ElementReference,
+    descendantTag: string,
+    descendantClass: string,
+  ): Promise<void> {
+    const locator = this.locatorFor(target);
+    const marker = randomUUID();
+    await locator.evaluate(
+      (element, input) => element.setAttribute(input.name, input.value),
+      { name: SHADOW_CLICK_MARKER, value: marker },
+    );
+    const cdp = await this.page.context().newCDPSession(this.page);
+    try {
+      const { root } = await cdp.send("DOM.getDocument", {
+        depth: -1,
+        pierce: true,
+      });
+      const descendant = findClosedShadowDescendant(
+        root as CdpDomNode,
+        marker,
+        descendantTag,
+        descendantClass,
+      );
+      if (!descendant) throw new Error("closed_shadow_target_not_found");
+      const { model } = await cdp.send("DOM.getBoxModel", {
+        nodeId: descendant.nodeId,
+      });
+      const [x1, y1, x2, y2, x3, y3, x4, y4] = model.content;
+      if ([x1, y1, x2, y2, x3, y3, x4, y4].some((value) => value == null)) {
+        throw new Error("closed_shadow_target_has_no_box");
+      }
+      const x = (x1! + x2! + x3! + x4!) / 4;
+      const y = (y1! + y2! + y3! + y4!) / 4;
+      await this.page.mouse.click(x, y);
+    } finally {
+      await cdp.detach().catch(() => undefined);
+      await locator
+        .evaluate(
+          (element, name) => element.removeAttribute(name),
+          SHADOW_CLICK_MARKER,
+        )
+        .catch(() => undefined);
+    }
   }
 
   async fill(target: ElementReference, value: string): Promise<void> {

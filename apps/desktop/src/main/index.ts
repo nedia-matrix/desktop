@@ -149,11 +149,14 @@ function requestApplicationQuit(): void {
   if (!applicationLifecycle.beginShutdown()) return;
   publicationObservations.retryPending();
   clearInterval(publicationRetryTimer);
-  const shutdown = shutdownDesktopRuntime({
-    browserSessions,
-    mediaSelections,
-    publishObservations,
-  }).then(() => localRuntimeServer?.stop());
+  const shutdown = Promise.all([
+    shutdownDesktopRuntime({
+      browserSessions,
+      mediaSelections,
+      publishObservations,
+    }),
+    localRuntimeServer?.stop(),
+  ]).then(() => undefined);
 
   void waitForShutdown(shutdown, SHUTDOWN_TIMEOUT_MS)
     .then((result) => {

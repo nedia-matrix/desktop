@@ -26,6 +26,7 @@ export function createXiaohongshuPublishResultMonitor(
   const contentForm = context.contentForm;
   const listeners = new Set<(event: PublishResultEvent) => void>();
   const lifecycle = new PublishMonitorLifecycle();
+  let submissionDeadline: number | null = null;
   let verificationDeadline: number | null = null;
   let pageWatchRun = 0;
   let responseQueue = Promise.resolve();
@@ -113,6 +114,17 @@ export function createXiaohongshuPublishResultMonitor(
         });
       }
       if (
+        lifecycle.state === "armed" &&
+        submissionDeadline !== null &&
+        clock.now() >= submissionDeadline
+      ) {
+        finish({
+          kind: "uncertain",
+          message: "点击发布后平台未返回受理信号，请先核对笔记管理页",
+        });
+        return;
+      }
+      if (
         lifecycle.state === "verifying" &&
         verificationDeadline !== null &&
         clock.now() >= verificationDeadline
@@ -178,6 +190,7 @@ export function createXiaohongshuPublishResultMonitor(
     async ready() {},
     arm() {
       if (!lifecycle.arm()) return;
+      submissionDeadline = clock.now() + RESULT_TIMEOUT_MS;
       void watchPageResult(++pageWatchRun);
     },
     stop,

@@ -46,6 +46,23 @@ export type WorkflowStep =
     }
   | { readonly kind: "click"; readonly targetId: TargetId }
   | {
+      readonly kind: "click-position";
+      readonly targetId: TargetId;
+      readonly xRatio: number;
+      readonly yRatio: number;
+    }
+  | {
+      readonly kind: "click-if-present";
+      readonly targetId: TargetId;
+      readonly timeoutMs: number;
+    }
+  | {
+      readonly kind: "click-closed-shadow";
+      readonly targetId: TargetId;
+      readonly descendantTag: string;
+      readonly descendantClass: string;
+    }
+  | {
       readonly kind: "fill";
       readonly targetId: TargetId;
       readonly inputKey: string;

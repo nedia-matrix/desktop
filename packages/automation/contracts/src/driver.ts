@@ -40,6 +40,16 @@ export interface AutomationDriver {
   wait(milliseconds: number): Promise<void>;
   query(candidate: LocatorCandidate): Promise<readonly ElementReference[]>;
   click(target: ElementReference): Promise<void>;
+  clickAtPosition(
+    target: ElementReference,
+    xRatio: number,
+    yRatio: number,
+  ): Promise<void>;
+  clickClosedShadowDescendant(
+    target: ElementReference,
+    descendantTag: string,
+    descendantClass: string,
+  ): Promise<void>;
   fill(target: ElementReference, value: string): Promise<void>;
   typeText(
     target: ElementReference,

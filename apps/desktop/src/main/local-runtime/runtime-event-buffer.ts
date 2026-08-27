@@ -16,6 +16,7 @@ interface EventWaiter {
 export class RuntimeEventBuffer<T> {
   private readonly entries: StoredRuntimeEvent<T>[] = [];
   private readonly waiters = new Set<EventWaiter>();
+  private closed = false;
   private sequence = 0;
 
   constructor(private readonly capacity = 256) {
@@ -40,7 +41,9 @@ export class RuntimeEventBuffer<T> {
     if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
       throw new TypeError("Runtime event timeout must be non-negative");
     }
-    if (this.sequence !== after || timeoutMs === 0) return this.snapshot(after);
+    if (this.closed || this.sequence !== after || timeoutMs === 0) {
+      return this.snapshot(after);
+    }
     await new Promise<void>((resolve) => {
       const waiter: EventWaiter = {
         finish: () => {
@@ -56,7 +59,12 @@ export class RuntimeEventBuffer<T> {
   }
 
   close(): void {
+    this.closed = true;
     for (const waiter of [...this.waiters]) waiter.finish();
+  }
+
+  open(): void {
+    this.closed = false;
   }
 
   private snapshot(after: number): RuntimeEventEnvelope<T> {

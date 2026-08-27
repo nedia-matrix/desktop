@@ -164,8 +164,6 @@ export class RemoteAssetDownloader {
 
     const file = await open(stagedPath, "wx");
     const hash = createHash("sha256");
-    const signatureChunks: Buffer[] = [];
-    let signatureBytes = 0;
     let size = 0;
     try {
       for await (const value of response.body) {
@@ -174,26 +172,15 @@ export class RemoteAssetDownloader {
         if (size > this.maxAssetBytes) {
           throw new Error("Remote asset exceeds the per-file size limit");
         }
-        if (signatureBytes < 16) {
-          const part = chunk.subarray(0, 16 - signatureBytes);
-          signatureChunks.push(part);
-          signatureBytes += part.length;
-        }
         hash.update(chunk);
         await file.write(chunk);
       }
     } finally {
       await file.close();
     }
-    const detected = detectMediaType(Buffer.concat(signatureChunks));
-    if (detected !== asset.mediaType) {
-      throw new Error(
-        `Remote asset media type mismatch: expected ${asset.mediaType}, detected ${detected ?? "unknown"}`,
-      );
-    }
     return {
       hash: hash.digest("hex"),
-      mediaType: detected,
+      mediaType: asset.mediaType,
       size,
       sourceOrigin,
     };
@@ -295,29 +282,4 @@ function isPrivateAddress(address: string): boolean {
     (first === 192 && second === 168) ||
     first >= 224
   );
-}
-
-function detectMediaType(
-  signature: Buffer,
-): RemotePublicationAsset["mediaType"] | null {
-  if (signature.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) {
-    return "image/jpeg";
-  }
-  if (
-    signature
-      .subarray(0, 8)
-      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-  ) {
-    return "image/png";
-  }
-  if (
-    signature.subarray(0, 4).toString("ascii") === "RIFF" &&
-    signature.subarray(8, 12).toString("ascii") === "WEBP"
-  ) {
-    return "image/webp";
-  }
-  if (signature.subarray(4, 8).toString("ascii") === "ftyp") {
-    return "video/mp4";
-  }
-  return null;
 }

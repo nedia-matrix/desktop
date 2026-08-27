@@ -10,7 +10,7 @@ export interface HostedPublishObservation {
   readonly id: string;
   ready(): Promise<void>;
   arm(): void;
-  stop(): void;
+  stop(reportInterruption?: boolean): void;
 }
 
 export interface PublishObservationEvent {
@@ -87,10 +87,10 @@ export class PublishObservationHost {
         input.monitor.arm();
         armed = true;
       },
-      stop: () => {
+      stop: (reportInterruption = true) => {
         if (stopped) return;
         stopped = true;
-        if (armed && !completed) {
+        if (reportInterruption && armed && !completed) {
           this.onEvent({
             observationId: id,
             publicationId: input.publicationId,

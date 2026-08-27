@@ -59,6 +59,19 @@ const publishPage = defineAutomationPage({
       targetId: "publish.editor.body",
       state: "editable",
     },
+    uploadSettled: {
+      kind: "not",
+      condition: {
+        kind: "target",
+        targetId: "publish.upload.progress",
+        state: "visible",
+      },
+    },
+    submitReady: {
+      kind: "target",
+      targetId: "publish.submit",
+      state: "enabled",
+    },
   },
   targets: {
     "publish.media.videoInput": {
@@ -74,6 +87,13 @@ const publishPage = defineAutomationPage({
         { kind: "css", selector: 'input[type="file"]' },
       ],
       conditions: ["attached", "enabled"],
+    },
+    "publish.media.imagePreview": {
+      candidates: [
+        { kind: "css", selector: ".img-preview-area .pr" },
+      ],
+      expectedCount: "one-or-more",
+      conditions: ["attached", "visible"],
     },
     "publish.editor.title": {
       candidates: [
@@ -93,14 +113,44 @@ const publishPage = defineAutomationPage({
       ],
       conditions: ["attached", "visible", "enabled", "editable"],
     },
+    "publish.upload.progress": {
+      candidates: [
+        {
+          kind: "css",
+          selector:
+            '[class*="uploading"], [class*="upload-progress"], [class*="transcod"], [role="progressbar"]',
+        },
+      ],
+      expectedCount: "one-or-more",
+      conditions: ["attached", "visible"],
+    },
     "publish.submit": {
+      candidates: [
+        {
+          kind: "css",
+          selector:
+            'xhs-publish-btn[is-publish="true"][submit-disabled="false"][submit-loading="false"]',
+        },
+      ],
+      conditions: ["attached", "visible", "enabled"],
+    },
+    "publish.submit.confirm": {
       candidates: [
         {
           kind: "aria",
           role: "button",
-          name: { value: "发布", exact: true },
+          name: { value: "确认发布", exact: true },
         },
-        { kind: "text", text: { value: "发布", exact: true } },
+        {
+          kind: "aria",
+          role: "button",
+          name: { value: "继续发布", exact: true },
+        },
+        {
+          kind: "aria",
+          role: "button",
+          name: { value: "确定", exact: true },
+        },
       ],
       conditions: ["attached", "visible", "enabled"],
     },
@@ -112,6 +162,7 @@ function prepareWorkflow(
   startUrl: string,
   inputState: "videoInputReady" | "imageInputReady",
   inputTarget: "publish.media.videoInput" | "publish.media.imageInput",
+  previewTarget: "publish.media.imagePreview" | null,
 ) {
   return defineWorkflow({
     id,
@@ -120,6 +171,16 @@ function prepareWorkflow(
     steps: [
       { kind: "wait-for-state", stateId: inputState, timeoutMs: 30_000 },
       { kind: "upload", targetId: inputTarget, inputKey: "mediaPaths" },
+      ...(previewTarget
+        ? [
+            {
+              kind: "wait-for-target-count" as const,
+              targetId: previewTarget,
+              inputKey: "mediaPaths",
+              timeoutMs: 1_800_000,
+            },
+          ]
+        : []),
       {
         kind: "wait-for-state",
         stateId: "editorReady",
@@ -147,6 +208,16 @@ function prepareWorkflow(
         suggestionWaitMs: 1_500,
         settleWaitMs: 500,
       },
+      {
+        kind: "wait-for-state",
+        stateId: "uploadSettled",
+        timeoutMs: 1_800_000,
+      },
+      {
+        kind: "wait-for-state",
+        stateId: "submitReady",
+        timeoutMs: 60_000,
+      },
     ],
   });
 }
@@ -156,17 +227,31 @@ const prepareVideo = prepareWorkflow(
   "https://creator.xiaohongshu.com/publish/publish?from=menu&target=video",
   "videoInputReady",
   "publish.media.videoInput",
+  null,
 );
 const prepareImageText = prepareWorkflow(
   "publish.prepare.imageText",
   "https://creator.xiaohongshu.com/publish/publish?from=menu&target=image",
   "imageInputReady",
   "publish.media.imageInput",
+  "publish.media.imagePreview",
 );
 const submit = defineWorkflow({
   id: "publish.submit",
   page: publishPage,
-  steps: [{ kind: "click", targetId: "publish.submit" }],
+  steps: [
+    {
+      kind: "click-position",
+      targetId: "publish.submit",
+      xRatio: 0.65,
+      yRatio: 0.5,
+    },
+    {
+      kind: "click-if-present",
+      targetId: "publish.submit.confirm",
+      timeoutMs: 5_000,
+    },
+  ],
 });
 
 const sessionDetection = defineSessionDetectionPlan({

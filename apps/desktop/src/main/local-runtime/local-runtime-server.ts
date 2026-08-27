@@ -120,6 +120,7 @@ export class LocalRuntimeServer {
   private async startListening(): Promise<number> {
     if (this.boundPort !== null) return this.boundPort;
 
+    this.events.open();
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
       this.server.once("error", onError);
@@ -142,14 +143,17 @@ export class LocalRuntimeServer {
   }
 
   private async stopListening(): Promise<void> {
-    this.events.close();
     if (!this.server.listening) {
+      this.events.close();
       this.boundPort = null;
       return;
     }
-    await new Promise<void>((resolve, reject) => {
+    const stopped = new Promise<void>((resolve, reject) => {
       this.server.close((error) => (error ? reject(error) : resolve()));
     });
+    this.events.close();
+    this.server.closeAllConnections();
+    await stopped;
     this.boundPort = null;
   }
 

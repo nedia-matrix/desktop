@@ -357,6 +357,7 @@ export class DraftPreparation {
         } as const;
       }
 
+      await opened.focus();
       this.dependencies.publishing.markSubmitting(publication.publication.id);
       publishObservation.arm();
       await this.workflowExecutor(form.automation.submit, opened.driver, {});
@@ -368,7 +369,9 @@ export class DraftPreparation {
         publicationId: publication.publication.id,
       } as const;
     } catch (error) {
-      publishObservation?.stop();
+      // The caller below persists and returns the actionable workflow error.
+      // Do not replace it with the host's generic interruption fallback.
+      publishObservation?.stop(false);
       this.dependencies.mediaSelections.release(request.mediaSelectionId);
       const message = error instanceof Error ? error.message : "Prepare failed";
       const current = publicationId

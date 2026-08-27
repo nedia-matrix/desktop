@@ -50,6 +50,24 @@ class MemoryDriver implements AutomationDriver {
     this.actions.push(`click:${target.id}`);
   }
 
+  async clickAtPosition(
+    target: ElementReference,
+    xRatio: number,
+    yRatio: number,
+  ) {
+    this.actions.push(`position-click:${target.id}:${xRatio}:${yRatio}`);
+  }
+
+  async clickClosedShadowDescendant(
+    target: ElementReference,
+    descendantTag: string,
+    descendantClass: string,
+  ) {
+    this.actions.push(
+      `shadow-click:${target.id}:${descendantTag}:${descendantClass}`,
+    );
+  }
+
   async fill(target: ElementReference, value: string) {
     this.actions.push(`fill:${target.id}:${value}`);
   }
@@ -147,6 +165,62 @@ describe("automation definitions and execution", () => {
     await expect(executeWorkflow(workflow, driver, {})).rejects.toMatchObject({
       details: { code: "INPUT_NOT_FOUND", workflowId: "publish.prepare" },
     });
+    expect(driver.actions).toEqual([]);
+  });
+
+  it("clicks a target inside a closed shadow component", async () => {
+    const workflow = defineWorkflow({
+      id: "publish.submit",
+      page,
+      steps: [
+        {
+          kind: "click-closed-shadow",
+          targetId: "submit",
+          descendantTag: "button",
+          descendantClass: "bg-red",
+        },
+      ],
+    });
+    const driver = new MemoryDriver();
+
+    await executeWorkflow(workflow, driver, {});
+
+    expect(driver.actions).toEqual(["shadow-click:submit:button:bg-red"]);
+  });
+
+  it("clicks a stable relative position inside a component host", async () => {
+    const workflow = defineWorkflow({
+      id: "publish.submit",
+      page,
+      steps: [
+        {
+          kind: "click-position",
+          targetId: "submit",
+          xRatio: 0.65,
+          yRatio: 0.5,
+        },
+      ],
+    });
+    const driver = new MemoryDriver();
+
+    await executeWorkflow(workflow, driver, {});
+
+    expect(driver.actions).toEqual(["position-click:submit:0.65:0.5"]);
+  });
+
+  it("skips an optional click when its target does not appear", async () => {
+    const workflow = defineWorkflow({
+      id: "publish.confirm",
+      page,
+      steps: [
+        { kind: "click-if-present", targetId: "submit", timeoutMs: 0 },
+      ],
+    });
+    const driver = new MemoryDriver();
+    driver.query = async () => [];
+
+    await executeWorkflow(workflow, driver, {});
+
     expect(driver.actions).toEqual([]);
   });
 

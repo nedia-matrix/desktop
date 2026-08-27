@@ -96,6 +96,24 @@ describe("PublishObservationHost", () => {
     );
   });
 
+  it("can dispose an armed observation without hiding a caller-owned error", () => {
+    const onEvent = vi.fn();
+    const host = new PublishObservationHost(onEvent);
+    const fake = fakeMonitor();
+    const hosted = host.attach({
+      publicationId: "publication-1",
+      accountId: "a",
+      platformId: "p",
+      monitor: fake.monitor,
+    });
+    hosted.arm();
+
+    hosted.stop(false);
+
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(fake.monitor.stop).toHaveBeenCalledOnce();
+  });
+
   it("releases its publication lease after a terminal result", () => {
     const onFinished = vi.fn();
     const host = new PublishObservationHost(vi.fn());

@@ -43,4 +43,31 @@ describe("RuntimeEventBuffer", () => {
       reset: true,
     });
   });
+
+  it("does not leave new polls waiting after the buffer closes", async () => {
+    const events = new RuntimeEventBuffer<string>();
+
+    events.close();
+
+    await expect(events.poll(0, 20_000)).resolves.toEqual({
+      cursor: 0,
+      events: [],
+      reset: false,
+    });
+  });
+
+  it("accepts long polls again after reopening", async () => {
+    const events = new RuntimeEventBuffer<string>();
+    events.close();
+    events.open();
+
+    const pending = events.poll(0, 1_000);
+    events.append("published");
+
+    await expect(pending).resolves.toEqual({
+      cursor: 1,
+      events: ["published"],
+      reset: false,
+    });
+  });
 });

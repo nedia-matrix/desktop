@@ -99,19 +99,27 @@ describe("RemoteAssetDownloader", () => {
     expect(files.filter((entry) => entry.endsWith(".png"))).toHaveLength(1);
   });
 
-  it("rejects oversized and forged media without leaving archived files", async () => {
+  it("uses the declared media type without inspecting the file signature", async () => {
+    const { downloader } = await fixture();
+
+    const [downloaded] = await downloader.download("request-1", [
+      image({ name: "image.jpg", mediaType: "image/jpeg" }),
+    ]);
+
+    expect(downloaded).toMatchObject({
+      mediaType: "image/jpeg",
+      name: "image.jpg",
+    });
+    expect(downloaded?.localRelativePath).toMatch(/\.jpg$/);
+  });
+
+  it("rejects oversized media without leaving archived files", async () => {
     const oversized = await fixture({ maxAssetBytes: png.length - 1 });
     await expect(
       oversized.downloader.download("request-1", [image()]),
     ).rejects.toThrow("per-file size limit");
 
-    const forged = await fixture({ body: Buffer.from("not an image") });
-    await expect(
-      forged.downloader.download("request-2", [image()]),
-    ).rejects.toThrow("media type mismatch");
-
     await expect(readdir(join(oversized.root, "assets"))).rejects.toThrow();
-    await expect(readdir(join(forged.root, "assets"))).rejects.toThrow();
   });
 
   it("rejects unsafe URLs and validates every redirect target", async () => {

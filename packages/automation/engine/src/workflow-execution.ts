@@ -81,6 +81,38 @@ async function executeStep(
     case "click":
       await driver.click(await resolveTarget(driver, page, step.targetId));
       return;
+    case "click-position":
+      await driver.clickAtPosition(
+        await resolveTarget(driver, page, step.targetId),
+        step.xRatio,
+        step.yRatio,
+      );
+      return;
+    case "click-if-present": {
+      const deadline = Date.now() + step.timeoutMs;
+      do {
+        try {
+          await driver.click(await resolveTarget(driver, page, step.targetId));
+          return;
+        } catch (error) {
+          if (
+            !(error instanceof AutomationError) ||
+            error.details.code !== "TARGET_NOT_FOUND"
+          ) {
+            throw error;
+          }
+        }
+        await driver.wait(100);
+      } while (Date.now() < deadline);
+      return;
+    }
+    case "click-closed-shadow":
+      await driver.clickClosedShadowDescendant(
+        await resolveTarget(driver, page, step.targetId),
+        step.descendantTag,
+        step.descendantClass,
+      );
+      return;
     case "fill":
       await driver.fill(
         await resolveTarget(driver, page, step.targetId),

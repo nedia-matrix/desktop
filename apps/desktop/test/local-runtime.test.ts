@@ -413,6 +413,41 @@ describe("LocalRuntimeServer", () => {
     });
   });
 
+  it("stops without waiting for an active request to finish", async () => {
+    const runtime = createRuntimeApplication([]);
+    const server = new LocalRuntimeServer({
+      application: runtime.application,
+      handshake,
+      port: 0,
+    });
+    servers.push(server);
+    const port = await server.start();
+    const request = httpRequest({
+      headers: { "Content-Type": "application/json" },
+      host: "127.0.0.1",
+      method: "POST",
+      path: "/v1/publications",
+      port,
+    });
+    const connected = new Promise<void>((resolve) => {
+      request.on("socket", (socket) => {
+        if (socket.connecting) socket.once("connect", resolve);
+        else resolve();
+      });
+    });
+    const requestClosed = new Promise<void>((resolve) => {
+      request.on("error", () => resolve());
+      request.on("close", () => resolve());
+    });
+    request.write("{");
+    await connected;
+
+    await server.stop();
+
+    await requestClosed;
+    expect(server.status()).toMatchObject({ status: "stopped", port: null });
+  });
+
   it("discovers the runtime and exposes accounts without authorization", async () => {
     const runtime = createRuntimeApplication();
     const server = new LocalRuntimeServer({
