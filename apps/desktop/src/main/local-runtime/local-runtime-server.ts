@@ -10,6 +10,7 @@ import type {
 } from "@nedia-matrix/ipc-contracts";
 
 import { AccountBindingVerificationError } from "../accounts/account-binding-application.js";
+import { AccountReplacedError } from "../accounts/account-application.js";
 import type { NediaMatrixUseCases } from "../application/nedia-matrix-application.js";
 import {
   parseRuntimePublicationRequest,
@@ -57,7 +58,10 @@ interface LocalRuntimeServerOptions {
   port?: number;
 }
 
-function runtimeSession(account: PlatformAccountSummary) {
+function runtimeSession(
+  account: PlatformAccountSummary,
+  replacementAlias?: { candidateAccountId: string },
+) {
   return {
     runtimeAccountId: account.id,
     platform: account.platformId,
@@ -73,6 +77,14 @@ function runtimeSession(account: PlatformAccountSummary) {
     avatarUrl: account.avatarUrl,
     accountInfo: account.accountInfo ?? [],
     lastVerifiedAt: account.lastVerifiedAt,
+    ...(replacementAlias
+      ? {
+          resolution: {
+            kind: "existing_account_profile_replaced" as const,
+            requestedRuntimeAccountId: replacementAlias.candidateAccountId,
+          },
+        }
+      : {}),
   };
 }
 
@@ -199,7 +211,9 @@ export class LocalRuntimeServer {
       this.json(
         response,
         200,
-        this.options.application.accounts.list().map(runtimeSession),
+        this.options.application.accounts
+          .list()
+          .map((account) => runtimeSession(account)),
       );
       return;
     }
@@ -399,7 +413,10 @@ export class LocalRuntimeServer {
   ): Promise<void> {
     try {
       const body = await this.readJsonRequest(request);
-      const account = this.requireAccount(runtimeAccountId);
+      const resolved = this.options.application.accounts.resolve({
+        accountId: runtimeAccountId,
+      });
+      const account = resolved.account;
       if (account.status === "login_required") {
         const platform = this.options.application.accounts
           .listPlatforms()
@@ -419,7 +436,14 @@ export class LocalRuntimeServer {
           accountId: runtimeAccountId,
         });
       }
-      this.json(response, 200, runtimeSession(account));
+      const current = this.options.application.accounts.resolve({
+        accountId: runtimeAccountId,
+      });
+      this.json(
+        response,
+        200,
+        runtimeSession(current.account, current.replacementAlias),
+      );
     } catch (error) {
       this.accountActionError(response, error);
     }
@@ -433,10 +457,13 @@ export class LocalRuntimeServer {
       await this.options.application.accounts.refresh({
         accountId: runtimeAccountId,
       });
+      const resolved = this.options.application.accounts.resolve({
+        accountId: runtimeAccountId,
+      });
       this.json(
         response,
         200,
-        runtimeSession(this.requireAccount(runtimeAccountId)),
+        runtimeSession(resolved.account, resolved.replacementAlias),
       );
     } catch (error) {
       this.accountActionError(response, error);
@@ -455,14 +482,6 @@ export class LocalRuntimeServer {
     } catch (error) {
       this.accountActionError(response, error);
     }
-  }
-
-  private requireAccount(runtimeAccountId: string): PlatformAccountSummary {
-    const account = this.options.application.accounts
-      .list()
-      .find((candidate) => candidate.id === runtimeAccountId);
-    if (!account) throw new TypeError("Runtime account does not exist");
-    return account;
   }
 
   private async bindAccount(
@@ -534,6 +553,14 @@ export class LocalRuntimeServer {
   }
 
   private accountActionError(response: ServerResponse, error: unknown): void {
+    if (error instanceof AccountReplacedError) {
+      this.json(response, 409, {
+        code: "ACCOUNT_REPLACED",
+        runtimeAccountId: error.survivingAccountId,
+        message: error.message,
+      });
+      return;
+    }
     this.json(response, 400, {
       code: "ACCOUNT_ACTION_FAILED",
       message: error instanceof Error ? error.message : "Account action failed",

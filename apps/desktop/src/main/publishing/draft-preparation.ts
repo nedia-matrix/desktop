@@ -47,7 +47,10 @@ type RemoteAssetsPort = Pick<
   "discardUnreferenced" | "download"
 >;
 type PublishObservationsPort = Pick<PublishObservationHost, "attach">;
-type AccountPublicationsPort = Pick<AccountPublicationLock, "acquire">;
+type AccountPublicationsPort = Pick<
+  AccountPublicationLock,
+  "acquire" | "isActive"
+>;
 type SessionDetection = Awaited<ReturnType<typeof detectPlatformSession>>;
 type SessionDetectionRecorder = (
   accountId: string,
@@ -107,6 +110,12 @@ export class DraftPreparation {
     }
 
     const account = this.dependencies.accountStore.require(request.accountId);
+    if (account.lifecycle !== "active") {
+      return {
+        status: "account_unknown",
+        reason: "账号身份仍在识别，暂不能创建发布任务",
+      } as const;
+    }
     const form = platformFor(account.platformId).publishing?.forms[
       request.contentForm
     ];
@@ -194,6 +203,12 @@ export class DraftPreparation {
         status: "already_started",
         publicationId: existingPublication.publication.id,
         state: existingPublication.publication.state,
+      } as const;
+    }
+    if (account.lifecycle !== "active") {
+      return {
+        status: "account_unknown",
+        reason: "账号身份仍在识别，暂不能创建发布任务",
       } as const;
     }
     const platform = platformFor(account.platformId);

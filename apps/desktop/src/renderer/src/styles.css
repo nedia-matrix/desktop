@@ -496,8 +496,8 @@ p {
 }
 .account-row {
   position: relative;
-  min-height: 74px;
-  padding: 10px 16px;
+  min-height: 56px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--border);
 }
 .account-row:last-child,
@@ -540,7 +540,7 @@ p {
 .content-time-cell {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: 2px;
 }
 .account-name strong,
 .content-summary-cell strong,
@@ -645,14 +645,9 @@ p {
 .action-menu {
   position: relative;
 }
-.action-menu summary {
-  display: grid;
-  place-items: center;
-  list-style: none;
-  cursor: pointer;
-}
-.action-menu summary::-webkit-details-marker {
-  display: none;
+.action-menu-trigger.active {
+  background: var(--surface-active);
+  color: var(--text);
 }
 .action-menu-popover {
   position: absolute;
@@ -1291,12 +1286,9 @@ label {
   .account-list-heading,
   .account-row {
     grid-template-columns:
-      minmax(170px, 1.4fr) minmax(85px, 0.65fr) minmax(120px, 0.85fr)
-      minmax(105px, auto);
-  }
-  .account-list-heading > :nth-child(3),
-  .account-metrics {
-    display: none;
+      minmax(145px, 1.3fr) minmax(70px, 0.55fr) minmax(130px, 0.9fr)
+      minmax(100px, 0.75fr) minmax(100px, auto);
+    column-gap: 10px;
   }
   .content-list-heading,
   .content-record {

@@ -8,10 +8,12 @@ describe("AccountPublicationLock", () => {
     const first = publications.acquire("account-1");
 
     expect(first).not.toBeNull();
+    expect(publications.isActive("account-1")).toBe(true);
     expect(publications.acquire("account-1")).toBeNull();
     expect(publications.acquire("account-2")).not.toBeNull();
 
     first?.release();
+    expect(publications.isActive("account-1")).toBe(false);
     expect(publications.acquire("account-1")).not.toBeNull();
   });
 

@@ -3,7 +3,7 @@ import type {
   PlatformAccountSummary,
   PlatformLoginEntrySummary,
 } from "@nedia-matrix/ipc-contracts";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import type { AppContext } from "../app-context.js";
 import { Icon } from "../components/icons.js";
@@ -265,6 +265,7 @@ function AccountRow({
   const followerCount = accountInformation(account, "follower_count");
   const contentCount = accountInformation(account, "content_count");
   const likeCount = accountInformation(account, "like_count");
+  const description = accountInformation(account, "desc");
   const actionBusy = busyKey?.endsWith(account.id) ?? false;
 
   return (
@@ -276,6 +277,11 @@ function AccountRow({
           <small title={account.externalAccountId ?? undefined}>
             {account.externalAccountId ?? "等待识别平台账号 ID"}
           </small>
+          {description !== undefined && (
+            <small title={String(description)}>
+              {description}
+            </small>
+          )}
         </span>
       </div>
       <div class="platform-cell">
@@ -311,32 +317,105 @@ function AccountRow({
         >
           打开平台
         </button>
-        <details class="action-menu">
-          <summary class="icon-button" aria-label="更多账号操作">
-            <Icon name="more" />
-          </summary>
-          <div class="action-menu-popover">
-            <button
-              type="button"
-              disabled={actionBusy}
-              onClick={() => void onAction(account, "refresh")}
-            >
-              <Icon name="refresh" size={15} />
-              刷新账号资料
-            </button>
-            <button
-              class="danger-menu-item"
-              type="button"
-              disabled={actionBusy}
-              onClick={() => void onAction(account, "delete")}
-            >
-              <Icon name="delete" size={15} />
-              删除账号
-            </button>
-          </div>
-        </details>
+        <AccountActionMenu
+          account={account}
+          disabled={actionBusy}
+          onAction={onAction}
+        />
       </div>
     </article>
+  );
+}
+
+function AccountActionMenu({
+  account,
+  disabled,
+  onAction,
+}: {
+  account: PlatformAccountSummary;
+  disabled: boolean;
+  onAction(
+    account: PlatformAccountSummary,
+    action: "open" | "refresh" | "delete",
+  ): Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuId = `account-actions-${account.id}`;
+
+  useEffect(() => {
+    if (!open) return;
+
+    menuRef.current
+      ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+      ?.focus();
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !menuRef.current?.contains(event.target)
+      ) {
+        setOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  const runAction = (action: "refresh" | "delete") => {
+    setOpen(false);
+    triggerRef.current?.focus();
+    void onAction(account, action);
+  };
+
+  return (
+    <div class="action-menu" ref={menuRef}>
+      <button
+        class={`icon-button action-menu-trigger${open ? " active" : ""}`}
+        type="button"
+        ref={triggerRef}
+        disabled={disabled}
+        aria-label="更多账号操作"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen((visible) => !visible)}
+      >
+        <Icon name="more" />
+      </button>
+      {open && (
+        <div class="action-menu-popover" id={menuId} role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => runAction("refresh")}
+          >
+            <Icon name="refresh" size={15} />
+            刷新账号资料
+          </button>
+          <button
+            class="danger-menu-item"
+            type="button"
+            role="menuitem"
+            onClick={() => runAction("delete")}
+          >
+            <Icon name="delete" size={15} />
+            删除账号
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

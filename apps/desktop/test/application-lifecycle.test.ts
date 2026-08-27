@@ -7,16 +7,14 @@ describe("application lifecycle", () => {
     const lifecycle = new ApplicationLifecycle();
 
     expect(lifecycle.requestWindowOpen()).toBe("open-now");
-    expect(lifecycle.shouldRelaunchAfterShutdown()).toBe(false);
   });
 
-  it("requests one relaunch when a window is opened during shutdown", () => {
+  it("ignores window requests while shutdown is in progress", () => {
     const lifecycle = new ApplicationLifecycle();
 
     expect(lifecycle.beginShutdown()).toBe(true);
-    expect(lifecycle.requestWindowOpen()).toBe("relaunch-after-shutdown");
-    expect(lifecycle.requestWindowOpen()).toBe("relaunch-after-shutdown");
-    expect(lifecycle.shouldRelaunchAfterShutdown()).toBe(true);
+    expect(lifecycle.requestWindowOpen()).toBe("ignore-during-shutdown");
+    expect(lifecycle.requestWindowOpen()).toBe("ignore-during-shutdown");
   });
 
   it("starts shutdown only once", () => {

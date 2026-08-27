@@ -80,7 +80,7 @@ export class PublishingApplication {
       throw new TypeError("Invalid publish content form");
     }
     const account = this.dependencies.accountStore.require(request.accountId);
-    if (account.status === "login_required") {
+    if (account.lifecycle !== "active" || account.status === "login_required") {
       return { status: "login_required" } as const;
     }
 

@@ -7,7 +7,10 @@ import {
   type OpenedPersistentBrowserSession,
 } from "@nedia-matrix/automation-playwright";
 import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
-import type { PlatformLoginEntry, PlatformModule } from "@nedia-matrix/platform-core";
+import type {
+  PlatformLoginEntry,
+  PlatformModule,
+} from "@nedia-matrix/platform-core";
 import { app } from "electron";
 
 interface ProfileEntry {
@@ -100,12 +103,16 @@ export class BrowserProfileHost {
   }
 
   async remove(account: PlatformAccountSummary): Promise<void> {
-    await this.withProfileTransition(account.profileId, async () => {
-      const existing = this.profiles.get(account.profileId);
-      this.profiles.delete(account.profileId);
+    await this.removeProfile(account.profileId);
+  }
+
+  async removeProfile(profileId: string): Promise<void> {
+    await this.withProfileTransition(profileId, async () => {
+      const existing = this.profiles.get(profileId);
+      this.profiles.delete(profileId);
       await this.closeEntry(existing);
       await this.dependencies.removeProfileDirectory(
-        this.profileDirectory(account.profileId),
+        this.profileDirectory(profileId),
         {
           recursive: true,
           force: true,

@@ -181,6 +181,7 @@ describe("platform session detection", () => {
     const detection = defineSessionDetectionPlan({
       probes: [
         {
+          identityScheme: "test.account_id",
           source: { kind: "request", url: "https://example.test/session" },
           fields: {
             externalAccountId: ["data", "id"],
@@ -213,6 +214,7 @@ describe("platform session detection", () => {
       detectPlatformSession(detection, new MemoryDriver(), client),
     ).resolves.toEqual({
       status: "authenticated",
+      identityScheme: "test.account_id",
       externalAccountId: "user-42",
       nickname: "测试账号",
       avatarUrl: null,

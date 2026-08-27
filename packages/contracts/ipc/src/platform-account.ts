@@ -1,6 +1,8 @@
 export type PlatformAccountStatus =
   "authenticated" | "login_required" | "unknown";
 
+export type PlatformAccountLifecycle = "pending_identity" | "active";
+
 export const platformAccountInfoKeys = [
   "desc",
   "follower_count",
@@ -18,7 +20,9 @@ export interface PlatformAccountSummary {
   id: string;
   platformId: string;
   profileId: string;
+  lifecycle: PlatformAccountLifecycle;
   displayName: string;
+  identityScheme: string | null;
   externalAccountId: string | null;
   nickname: string | null;
   avatarUrl: string | null;
@@ -54,6 +58,7 @@ export interface OpenPlatformAccountResult {
 export type DetectPlatformSessionResult =
   | {
       status: "authenticated";
+      identityScheme: string;
       externalAccountId: string;
       nickname: string;
       avatarUrl: string | null;

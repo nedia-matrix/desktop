@@ -32,6 +32,9 @@ import { removeAccountAndResources } from "../runtime-cleanup.js";
 export interface AccountUseCases {
   listPlatforms(): ReturnType<AccountApplication["listPlatforms"]>;
   list(): ReturnType<AccountApplication["listAccounts"]>;
+  resolve(
+    request: PlatformAccountRequest,
+  ): ReturnType<AccountApplication["resolveAccount"]>;
   create(
     request: CreatePlatformAccountRequest,
   ): ReturnType<AccountApplication["createAccount"]>;
@@ -50,6 +53,9 @@ export interface AccountUseCases {
   remove(
     request: PlatformAccountRequest,
   ): ReturnType<AccountApplication["removeAccount"]>;
+  cleanupRetiredProfiles(): ReturnType<
+    AccountApplication["cleanupRetiredProfiles"]
+  >;
 }
 
 export interface AccountBindingUseCases {
@@ -104,10 +110,23 @@ interface DesktopApplicationDependencies extends Omit<
   "recordSessionDetection"
 > {
   accountStore: PublishingApplicationDependencies["accountStore"] &
-    Pick<PlatformAccountStore, "list" | "put" | "remove">;
+    Pick<
+      PlatformAccountStore,
+      | "discardRetiredProfile"
+      | "findActiveByIdentity"
+      | "get"
+      | "hasProfileReference"
+      | "list"
+      | "listRetiredProfiles"
+      | "pruneExpiredAliases"
+      | "put"
+      | "remove"
+      | "replaceCandidateProfile"
+      | "resolve"
+    >;
   accountBindings: AccountBindingApplicationDependencies["accountBindings"];
   browserSessions: PublishingApplicationDependencies["browserSessions"] &
-    Pick<BrowserProfileHost, "openForLogin" | "remove">;
+    Pick<BrowserProfileHost, "openForLogin" | "remove" | "removeProfile">;
   mediaSelections: PublishingApplicationDependencies["mediaSelections"] &
     Pick<MediaSelectionStore, "removeForAccount">;
   publishObservations: PublishingApplicationDependencies["publishObservations"] &
@@ -143,6 +162,8 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       createId: dependencies.createId,
       now: dependencies.now,
       sessionDetector: dependencies.sessionDetector,
+      isAccountBusy: (accountId) =>
+        dependencies.accountPublications.isActive(accountId),
       onAccountsChanged: () =>
         dependencies.eventSink?.publish({ type: "accounts.changed" }),
     });
@@ -159,12 +180,15 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
     this.accounts = {
       listPlatforms: () => this.accountApplication.listPlatforms(),
       list: () => this.accountApplication.listAccounts(),
+      resolve: (request) => this.accountApplication.resolveAccount(request),
       create: (request) => this.accountApplication.createAccount(request),
       openLogin: (request) => this.accountApplication.openLogin(request),
       open: (request) => this.accountApplication.openAccount(request),
       refresh: (request) => this.accountApplication.refreshAccount(request),
       verify: (request) => this.accountApplication.verifyAccount(request),
       remove: (request) => this.accountApplication.removeAccount(request),
+      cleanupRetiredProfiles: () =>
+        this.accountApplication.cleanupRetiredProfiles(),
     };
     this.accountBindings = {
       list: () => this.bindings.list(),

@@ -32,12 +32,14 @@ export type SessionProbeSource =
     };
 
 export interface SessionProbe {
+  readonly identityScheme: string;
   readonly source: SessionProbeSource;
   readonly fields: SessionAccountFields;
   readonly accountInfo?: readonly AccountInfoFieldDefinition[];
 }
 
 export interface DomSessionFallback {
+  readonly identityScheme: string;
   readonly page: AutomationPage;
   readonly loggedOutTargetId: TargetId;
   readonly nicknameTargetId: TargetId;
@@ -68,6 +70,7 @@ export interface SessionProbeClient {
 export type PlatformSessionDetection =
   | {
       readonly status: "authenticated";
+      readonly identityScheme: string;
       readonly externalAccountId: string;
       readonly nickname: string;
       readonly avatarUrl: string | null;

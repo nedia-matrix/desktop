@@ -172,6 +172,7 @@ const submit = defineWorkflow({
 const sessionDetection = defineSessionDetectionPlan({
   probes: [
     {
+      identityScheme: "xiaohongshu.red_num",
       source: {
         kind: "request",
         url: "https://creator.xiaohongshu.com/api/galaxy/creator/home/personal_info",
@@ -200,6 +201,7 @@ const sessionDetection = defineSessionDetectionPlan({
       ],
     },
     {
+      identityScheme: "xiaohongshu.user_id",
       source: {
         kind: "request",
         url: "https://creator.xiaohongshu.com/api/galaxy/user/info",
@@ -212,6 +214,7 @@ const sessionDetection = defineSessionDetectionPlan({
     },
   ],
   domFallback: {
+    identityScheme: "xiaohongshu.user_id",
     page: homePage,
     loggedOutTargetId: "session.loggedOut",
     nicknameTargetId: "session.nickname",
@@ -230,6 +233,7 @@ export const xiaohongshuPlatformModule = definePlatformModule({
   },
   accounts: {
     implementationStatus: "live-tested",
+    duplicateProfileReplacement: "disabled",
     loginEntries: [
       {
         id: "default",

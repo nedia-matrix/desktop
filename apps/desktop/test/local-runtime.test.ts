@@ -11,6 +11,7 @@ import {
   LocalRuntimeServer,
   type LocalRuntimeHandshake,
 } from "../src/main/local-runtime/local-runtime-server.js";
+import { AccountReplacedError } from "../src/main/accounts/account-application.js";
 import type { RuntimeAccountBinding } from "../src/main/local-runtime/runtime-account-binding-store.js";
 
 const origin = "https://www.example.com";
@@ -58,7 +59,9 @@ const account: PlatformAccountSummary = {
   id: "account-1",
   platformId: "douyin",
   profileId: "matrix-douyin-account-1",
+  lifecycle: "active",
   displayName: "抖音账号",
+  identityScheme: "douyin.short_id",
   externalAccountId: "external-1",
   nickname: "测试账号",
   avatarUrl: "https://example.com/avatar.png",
@@ -102,12 +105,41 @@ function createAccountBindings() {
 
 function createRuntimeApplication(
   initialAccounts: PlatformAccountSummary[] = [account],
-  options?: { publicationBusy?: boolean; verificationMismatch?: boolean },
+  options?: {
+    publicationBusy?: boolean;
+    verificationMismatch?: boolean;
+    replacementAlias?: {
+      candidateAccountId: string;
+      survivingAccountId: string;
+    };
+  },
 ) {
-  const accounts = [...initialAccounts];
+  const accounts = initialAccounts.map((stored) => ({
+    ...stored,
+    accountInfo: [...(stored.accountInfo ?? [])],
+  }));
   const actions: string[] = [];
   const publications: PublicationSummary[] = [];
   const accountBindings = createAccountBindings();
+  const resolveAccount = (accountId: string) => {
+    const replacementAlias =
+      options?.replacementAlias?.candidateAccountId === accountId
+        ? {
+            ...options.replacementAlias,
+            createdAt: "2026-08-10T00:00:00.000Z",
+            expiresAt: "2026-08-11T00:00:00.000Z",
+          }
+        : undefined;
+    const resolvedAccountId = replacementAlias?.survivingAccountId ?? accountId;
+    const resolved = accounts.find(
+      (candidate) => candidate.id === resolvedAccountId,
+    );
+    if (!resolved) throw new TypeError("Runtime account does not exist");
+    return {
+      account: resolved,
+      ...(replacementAlias ? { replacementAlias } : {}),
+    };
+  };
   const legacyApplication = {
     listPlatforms: () => [
       {
@@ -171,6 +203,8 @@ function createRuntimeApplication(
       const created: PlatformAccountSummary = {
         ...account,
         id: `account-${accounts.length + 1}`,
+        lifecycle: "pending_identity",
+        identityScheme: null,
         externalAccountId: null,
         nickname: null,
         status: "login_required",
@@ -192,14 +226,14 @@ function createRuntimeApplication(
     },
     refreshAccount: async ({ accountId }: { accountId: string }) => {
       actions.push(`refresh:${accountId}`);
-      const stored = accounts.find((candidate) => candidate.id === accountId);
-      if (!stored) throw new TypeError("Platform account does not exist");
+      const stored = resolveAccount(accountId).account;
       stored.status = "authenticated";
       stored.externalAccountId = "refreshed-external";
       stored.nickname = "刷新后的账号";
       stored.accountInfo = [{ key: "follower_count", value: 25600 }];
       return {
         status: "authenticated" as const,
+        identityScheme: "douyin.short_id",
         externalAccountId: stored.externalAccountId,
         nickname: stored.nickname,
         avatarUrl: null,
@@ -221,6 +255,7 @@ function createRuntimeApplication(
       stored.status = "authenticated";
       return {
         status: "authenticated" as const,
+        identityScheme: "douyin.short_id",
         externalAccountId: stored.externalAccountId!,
         nickname: stored.nickname!,
         avatarUrl: stored.avatarUrl,
@@ -230,6 +265,10 @@ function createRuntimeApplication(
     },
     removeAccount: async ({ accountId }: { accountId: string }) => {
       actions.push(`remove:${accountId}`);
+      const resolved = resolveAccount(accountId);
+      if (resolved.replacementAlias) {
+        throw new AccountReplacedError(resolved.account.id);
+      }
       const index = accounts.findIndex(
         (candidate) => candidate.id === accountId,
       );
@@ -247,12 +286,15 @@ function createRuntimeApplication(
       accounts: {
         listPlatforms: legacyApplication.listPlatforms,
         list: legacyApplication.listAccounts,
+        resolve: ({ accountId }: { accountId: string }) =>
+          resolveAccount(accountId),
         create: legacyApplication.createAccount,
         openLogin: legacyApplication.openLogin,
         open: legacyApplication.openAccount,
         refresh: legacyApplication.refreshAccount,
         verify: legacyApplication.verifyAccount,
         remove: legacyApplication.removeAccount,
+        cleanupRetiredProfiles: async () => undefined,
       },
       accountBindings: {
         list: () => accountBindings.store.list(),
@@ -521,6 +563,50 @@ describe("LocalRuntimeServer", () => {
     expect(removeResponse.status).toBe(200);
     expect(runtime.accounts).toEqual([]);
     expect(accountBindings.bindings).toEqual([]);
+  });
+
+  it("resolves a replaced candidate id without adding a new HTTP flow", async () => {
+    const runtime = createRuntimeApplication([account], {
+      replacementAlias: {
+        candidateAccountId: "candidate-account",
+        survivingAccountId: account.id,
+      },
+    });
+    const server = new LocalRuntimeServer({
+      application: runtime.application,
+      handshake,
+      port: 0,
+    });
+    servers.push(server);
+    const port = await server.start();
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const headers = { "Content-Type": "application/json" };
+
+    const refreshResponse = await fetch(
+      `${baseUrl}/v1/accounts/candidate-account/refresh`,
+      { body: "{}", headers, method: "POST" },
+    );
+    expect(refreshResponse.status).toBe(200);
+    expect(await refreshResponse.json()).toMatchObject({
+      runtimeAccountId: account.id,
+      resolution: {
+        kind: "existing_account_profile_replaced",
+        requestedRuntimeAccountId: "candidate-account",
+      },
+    });
+
+    const removeResponse = await fetch(
+      `${baseUrl}/v1/accounts/candidate-account`,
+      { headers, method: "DELETE" },
+    );
+    expect(removeResponse.status).toBe(409);
+    expect(await removeResponse.json()).toMatchObject({
+      code: "ACCOUNT_REPLACED",
+      runtimeAccountId: account.id,
+    });
+    expect(runtime.accounts).toEqual([
+      expect.objectContaining({ id: account.id }),
+    ]);
   });
 
   it("rejects a binding when the verified stable identity changed", async () => {

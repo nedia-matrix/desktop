@@ -13,6 +13,7 @@ function moduleInput() {
     },
     accounts: {
       implementationStatus: "fixture-tested" as const,
+      duplicateProfileReplacement: "enabled" as const,
       loginEntries: [
         {
           id: "default",

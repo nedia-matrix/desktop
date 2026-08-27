@@ -35,7 +35,10 @@ type AccountBindingsPort = Pick<
   RuntimeAccountBindingStore,
   "list" | "put" | "removeForRuntimeAccount"
 >;
-type AccountsPort = Pick<AccountApplication, "listAccounts" | "verifyAccount">;
+type AccountsPort = Pick<
+  AccountApplication,
+  "listAccounts" | "resolveAccount" | "verifyAccount"
+>;
 
 export interface AccountBindingApplicationDependencies {
   accountBindings: AccountBindingsPort;
@@ -57,7 +60,9 @@ export class AccountBindingApplication {
   }
 
   bind(command: BindAccountCommand): RuntimeAccountBinding {
-    const account = this.requireAccount(command.runtimeAccountId);
+    const account = this.dependencies.accounts.resolveAccount({
+      accountId: command.runtimeAccountId,
+    }).account;
     if (!account.externalAccountId) {
       throw new TypeError("Runtime account does not have a stable identity");
     }

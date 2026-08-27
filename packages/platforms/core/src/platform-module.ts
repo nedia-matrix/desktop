@@ -10,6 +10,7 @@ export const platformImplementationStatusSchema = z.enum([
   "fixture-tested",
   "live-tested",
 ]);
+const duplicateProfileReplacementSchema = z.enum(["enabled", "disabled"]);
 export type PlatformImplementationStatus = z.infer<
   typeof platformImplementationStatusSchema
 >;
@@ -27,6 +28,7 @@ export interface PlatformBrowserPolicy {
 
 export interface PlatformAccountsCapability {
   readonly implementationStatus: PlatformImplementationStatus;
+  readonly duplicateProfileReplacement: "enabled" | "disabled";
   readonly loginEntries: readonly PlatformLoginEntry[];
   readonly detection: SessionDetectionPlan;
 }
@@ -126,6 +128,9 @@ export function definePlatformModule(module: PlatformModule): PlatformModule {
   }
   platformImplementationStatusSchema.parse(
     module.accounts.implementationStatus,
+  );
+  duplicateProfileReplacementSchema.parse(
+    module.accounts.duplicateProfileReplacement,
   );
   if (module.publishing) {
     platformImplementationStatusSchema.parse(

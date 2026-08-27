@@ -199,6 +199,7 @@ const submit = defineWorkflow({
 const sessionDetection = defineSessionDetectionPlan({
   probes: [
     {
+      identityScheme: "douyin.short_id",
       source: {
         kind: "request",
         url: "https://creator.douyin.com/web/api/media/user/info/",
@@ -224,6 +225,7 @@ const sessionDetection = defineSessionDetectionPlan({
     },
   ],
   domFallback: {
+    identityScheme: "douyin.user_id",
     page: homePage,
     loggedOutTargetId: "session.loggedOut",
     nicknameTargetId: "session.nickname",
@@ -242,6 +244,7 @@ export const douyinPlatformModule = definePlatformModule({
   },
   accounts: {
     implementationStatus: "live-tested",
+    duplicateProfileReplacement: "enabled",
     loginEntries: [
       {
         id: "default",

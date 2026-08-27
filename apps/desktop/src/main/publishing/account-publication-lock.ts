@@ -5,6 +5,10 @@ export interface AccountPublicationLease {
 export class AccountPublicationLock {
   private readonly activeAccountIds = new Set<string>();
 
+  isActive(accountId: string): boolean {
+    return this.activeAccountIds.has(accountId);
+  }
+
   acquire(accountId: string): AccountPublicationLease | null {
     if (this.activeAccountIds.has(accountId)) return null;
     this.activeAccountIds.add(accountId);

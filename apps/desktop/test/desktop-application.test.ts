@@ -110,7 +110,12 @@ function createPublishFixture(options?: {
     id: "account-1",
     platformId: options?.platformId ?? "douyin",
     profileId: `matrix-${options?.platformId ?? "douyin"}-account-1`,
+    lifecycle: "active",
     displayName: options?.platformId === "kuaishou" ? "快手账号" : "抖音账号",
+    identityScheme:
+      options?.platformId === "kuaishou"
+        ? "kuaishou.user_id"
+        : "douyin.short_id",
     externalAccountId: "external-1",
     nickname: "测试账号",
     avatarUrl: null,
@@ -270,6 +275,10 @@ function createPublishFixture(options?: {
         ? { status: "login_required" as const }
         : {
             status: "authenticated" as const,
+            identityScheme:
+              options?.platformId === "kuaishou"
+                ? "kuaishou.user_id"
+                : "douyin.short_id",
             externalAccountId:
               options?.detectedExternalAccountId ?? "external-1",
             nickname: "测试账号",
@@ -586,6 +595,7 @@ describe("NediaMatrixApplication", () => {
 
     dependencies.sessionDetector = async () => ({
       status: "authenticated" as const,
+      identityScheme: "douyin.short_id",
       externalAccountId: "external-1",
       nickname: "测试账号",
       avatarUrl: null,
@@ -611,6 +621,7 @@ describe("NediaMatrixApplication", () => {
     const { accounts, accountUpdates, dependencies } = createPublishFixture();
     dependencies.sessionDetector = async () => ({
       status: "authenticated" as const,
+      identityScheme: "douyin.short_id",
       externalAccountId: "external-1",
       nickname: "更新后的账号",
       avatarUrl: "https://example.test/avatar.png",

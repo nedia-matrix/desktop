@@ -106,9 +106,7 @@ function hideDockIcon(): void {
 }
 
 function openMainWindow(): void {
-  if (applicationLifecycle.requestWindowOpen() === "relaunch-after-shutdown") {
-    // The current process still owns the single-instance lock while it cleans up.
-    // Relaunch after it exits instead of opening a window that is about to close.
+  if (applicationLifecycle.requestWindowOpen() === "ignore-during-shutdown") {
     return;
   }
   showDockIcon();
@@ -170,14 +168,6 @@ function requestApplicationQuit(): void {
     })
     .finally(() => {
       applicationTray?.destroy();
-      if (applicationLifecycle.shouldRelaunchAfterShutdown()) {
-        // Cleanup has stopped the local server, so ownership can safely pass to the
-        // replacement process before this process exits.
-        app.releaseSingleInstanceLock();
-        app.relaunch();
-        app.exit(0);
-        return;
-      }
       quitAllowed = true;
       app.quit();
     });
@@ -212,6 +202,9 @@ void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
       } satisfies ApplicationEventSink,
     };
     application = new NediaMatrixApplication(dependencies);
+    void application.accounts.cleanupRetiredProfiles().catch((error) => {
+      console.error("Failed to clean up retired browser profiles", error);
+    });
     application.publications.recoverInterrupted();
     registerAccountIpcHandlers(application);
     registerPublishIpcHandlers({

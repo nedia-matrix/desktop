@@ -30,6 +30,7 @@ const accountInfoFieldSchema = z.object({
   valueType: z.enum(["string", "number"]),
 });
 const sessionProbeSchema = z.object({
+  identityScheme: z.string().min(1),
   source: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("request"), url: z.string().url() }),
     z.object({
@@ -50,6 +51,7 @@ const sessionDetectionPlanSchema = z.object({
   probes: z.array(sessionProbeSchema).default([]),
   domFallback: z
     .object({
+      identityScheme: z.string().min(1),
       page: z.custom<AutomationPage>(),
       loggedOutTargetId: z.string().min(1),
       nicknameTargetId: z.string().min(1),
@@ -157,6 +159,7 @@ function authenticatedDetection(
   );
   return {
     status: "authenticated",
+    identityScheme: probe.identityScheme,
     externalAccountId,
     nickname,
     avatarUrl: probe.fields.avatarUrl
@@ -239,6 +242,7 @@ export async function detectPlatformSession(
     if (nickname && externalAccountId) {
       return {
         status: "authenticated",
+        identityScheme: fallback.identityScheme,
         externalAccountId,
         nickname,
         avatarUrl: null,

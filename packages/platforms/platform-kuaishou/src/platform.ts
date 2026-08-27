@@ -197,6 +197,7 @@ const submit = defineWorkflow({
 const sessionDetection = defineSessionDetectionPlan({
   probes: [
     {
+      identityScheme: "kuaishou.user_id",
       source: {
         kind: "observed-response",
         method: "POST",
@@ -217,6 +218,7 @@ const sessionDetection = defineSessionDetectionPlan({
       ],
     },
     {
+      identityScheme: "kuaishou.user_id",
       source: {
         kind: "observed-response",
         method: "POST",
@@ -231,6 +233,7 @@ const sessionDetection = defineSessionDetectionPlan({
     },
   ],
   domFallback: {
+    identityScheme: "kuaishou.user_id",
     page: profilePage,
     loggedOutTargetId: "session.loggedOut",
     nicknameTargetId: "session.nickname",
@@ -249,6 +252,7 @@ export const kuaishouPlatformModule = definePlatformModule({
   },
   accounts: {
     implementationStatus: "live-tested",
+    duplicateProfileReplacement: "enabled",
     loginEntries: [
       {
         id: "default",
