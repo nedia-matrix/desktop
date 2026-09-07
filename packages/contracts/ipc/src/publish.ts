@@ -96,7 +96,13 @@ export type PreparePublishDraftResult =
     };
 
 export type PublishResultStatus =
-  "verification_required" | "verifying" | "published" | "failed" | "uncertain";
+  | "submission_attempted"
+  | "verification_required"
+  | "verifying"
+  | "published"
+  | "failed"
+  | "uncertain"
+  | "cancelled";
 
 export interface PublishResultUpdate {
   observationId: string;

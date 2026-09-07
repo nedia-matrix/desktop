@@ -1,7 +1,7 @@
 import type { PublicationRecord } from "@nedia-matrix/application-publishing";
 import { describe, expect, it } from "vitest";
 
-import { PublicationArchiveMaintenance } from "../src/main/publishing/publication-archive-maintenance.js";
+import { PublicationArchiveMaintenance } from "../src/main/publishing/application/publication-archive-maintenance.js";
 
 class MemoryPublications {
   readonly records = new Map<string, PublicationRecord>();

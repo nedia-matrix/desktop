@@ -15,5 +15,18 @@ export interface PlatformSummary {
   publishCapabilities: Array<{
     contentForm: "video" | "imageText";
     submissionModes: Array<"automatic" | "manual_confirmation">;
+    constraints: {
+      titleMaxLength?: number;
+      bodyMaxLength?: number;
+      mediaMaxCount?: number;
+    };
+    tagPolicy?: {
+      placement: "inline" | "new-lines";
+      maxCount?: number;
+    };
+    descriptionComposition?: {
+      parts: Array<"title" | "body">;
+      separator: string;
+    };
   }>;
 }

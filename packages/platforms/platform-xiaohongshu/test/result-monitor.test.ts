@@ -107,6 +107,7 @@ describe("Xiaohongshu result monitor", () => {
     const fake = fakeSession();
     const monitor = createXiaohongshuPublishResultMonitor({
       contentForm: "imageText",
+      submissionMode: "automatic",
       session: fake.session,
       clock,
       diagnostics: diagnostics(),
@@ -115,6 +116,7 @@ describe("Xiaohongshu result monitor", () => {
     monitor.subscribe((event) => events.push(event));
     await monitor.ready();
     monitor.arm();
+    monitor.submissionAttempted();
     fake.respond({ success: true, result: 0 });
     await vi.advanceTimersByTimeAsync(100_000);
     expect(events.map((event) => event.kind)).toEqual([
@@ -136,6 +138,7 @@ describe("Xiaohongshu result monitor", () => {
     closing.respond({ success: true, result: 0 });
     await vi.advanceTimersByTimeAsync(0);
     closing.close();
+    await vi.advanceTimersByTimeAsync(0);
     expect(closingEvents.at(-1)?.kind).toBe("uncertain");
   });
 
@@ -144,6 +147,7 @@ describe("Xiaohongshu result monitor", () => {
     const fake = fakeSession();
     const monitor = createXiaohongshuPublishResultMonitor({
       contentForm: "imageText",
+      submissionMode: "automatic",
       session: fake.session,
       clock,
       diagnostics: diagnostics(),
@@ -152,6 +156,7 @@ describe("Xiaohongshu result monitor", () => {
     monitor.subscribe((event) => events.push(event));
     await monitor.ready();
     monitor.arm();
+    monitor.submissionAttempted();
 
     await vi.advanceTimersByTimeAsync(100_000);
 

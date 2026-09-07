@@ -193,7 +193,13 @@ const prepareImageText = prepareWorkflow(
 const submit = defineWorkflow({
   id: "publish.submit",
   page: publishPage,
-  steps: [{ kind: "click", targetId: "publish.submit" }],
+  steps: [
+    {
+      kind: "click",
+      targetId: "publish.submit",
+      commitBoundary: "submission",
+    },
+  ],
 });
 
 const sessionDetection = defineSessionDetectionPlan({
@@ -237,7 +243,7 @@ const sessionDetection = defineSessionDetectionPlan({
 export const douyinPlatformModule = definePlatformModule({
   id: "douyin",
   displayName: "抖音",
-  rulesVersion: "1.0.0-capabilities",
+  rulesVersion: "1.2.0-publish-constraints",
   browser: {
     startUrl: "https://creator.douyin.com/creator-micro/home",
     allowedHostSuffixes: ["douyin.com"],
@@ -259,7 +265,7 @@ export const douyinPlatformModule = definePlatformModule({
     forms: {
       video: {
         constraints: {
-          titleMaxLength: 30,
+          titleMaxLength: 20,
           bodyMaxLength: 1_000,
           mediaMaxCount: 1,
         },
@@ -269,7 +275,7 @@ export const douyinPlatformModule = definePlatformModule({
       },
       imageText: {
         constraints: {
-          titleMaxLength: 30,
+          titleMaxLength: 20,
           bodyMaxLength: 1_000,
           mediaMaxCount: 35,
         },

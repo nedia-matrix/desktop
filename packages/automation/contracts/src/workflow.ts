@@ -44,17 +44,23 @@ export type WorkflowStep =
       readonly targetId: TargetId;
       readonly inputKey: string;
     }
-  | { readonly kind: "click"; readonly targetId: TargetId }
+  | {
+      readonly kind: "click";
+      readonly targetId: TargetId;
+      readonly commitBoundary?: "submission";
+    }
   | {
       readonly kind: "click-position";
       readonly targetId: TargetId;
       readonly xRatio: number;
       readonly yRatio: number;
+      readonly commitBoundary?: "submission";
     }
   | {
       readonly kind: "click-if-present";
       readonly targetId: TargetId;
       readonly timeoutMs: number;
+      readonly commitBoundary?: "submission";
     }
   | {
       readonly kind: "click-closed-shadow";
@@ -96,6 +102,14 @@ export interface AutomationWorkflow {
   readonly page: AutomationPage;
   readonly startUrl?: string;
   readonly steps: readonly WorkflowStep[];
+}
+
+export interface WorkflowExecutionHooks {
+  beforeCommit?(input: {
+    workflowId: string;
+    stepIndex: number;
+    boundary: "submission";
+  }): Promise<void>;
 }
 
 export type WorkflowInput = string | readonly string[];

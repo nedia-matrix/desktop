@@ -30,6 +30,8 @@ export function createXiaohongshuPublishResultMonitor(
   let verificationDeadline: number | null = null;
   let pageWatchRun = 0;
   let responseQueue = Promise.resolve();
+  let submissionObserved = false;
+  let interrupting: Promise<void> | undefined;
   const reportedDiagnostics = new Set<string>();
 
   const reportOnce = (
@@ -50,8 +52,23 @@ export function createXiaohongshuPublishResultMonitor(
   const stop = (): void => {
     if (!lifecycle.complete()) return;
     pageWatchRun += 1;
+    unsubscribeRequests();
     unsubscribeResponses();
     unsubscribeClose();
+  };
+
+  const observeSubmissionRequest = (): void => {
+    if (
+      submissionObserved ||
+      (lifecycle.state !== "armed" && lifecycle.state !== "verifying")
+    )
+      return;
+    submissionObserved = true;
+    emit({
+      kind: "submission_attempted",
+      source: "page_request",
+      message: "已观察到小红书发布请求",
+    });
   };
 
   const finish = (event: PublishResultEvent): void => {
@@ -72,7 +89,9 @@ export function createXiaohongshuPublishResultMonitor(
         return;
       case "accepted":
         if (!lifecycle.beginVerification()) return;
-        verificationDeadline = clock.now() + RESULT_TIMEOUT_MS;
+        if (context.submissionMode === "automatic") {
+          verificationDeadline = clock.now() + RESULT_TIMEOUT_MS;
+        }
         emit({
           kind: "verifying",
           message: signal.message ?? "平台已受理，正在确认笔记",
@@ -171,15 +190,35 @@ export function createXiaohongshuPublishResultMonitor(
         );
       });
   });
+  const unsubscribeRequests =
+    session.requests?.subscribe((request) => {
+      if (isXiaohongshuPublishResponseCandidate(request)) {
+        observeSubmissionRequest();
+      }
+    }) ?? (() => undefined);
+  const interrupt = (
+    reason: "page_closed" | "observation_interrupted" | "desktop_shutdown",
+  ) => {
+    interrupting ??= (async () => {
+      unsubscribeRequests();
+      unsubscribeResponses();
+      unsubscribeClose();
+      pageWatchRun += 1;
+      await responseQueue;
+      if (lifecycle.state === "completed") return;
+      finish(
+        submissionObserved || lifecycle.state === "verifying"
+          ? {
+              kind: "uncertain",
+              message: `${reason === "page_closed" ? "浏览器已关闭" : "发布观察已中断"}，且已存在提交证据，请先核对笔记管理页`,
+            }
+          : { kind: "cancelled", message: "未观察到提交尝试，发布已取消" },
+      );
+    })();
+    return interrupting;
+  };
   const unsubscribeClose = session.page.subscribeClose(() => {
-    if (lifecycle.state === "verifying") {
-      finish({
-        kind: "uncertain",
-        message: "确认发布结果前浏览器已关闭，请先核对笔记管理页",
-      });
-      return;
-    }
-    stop();
+    void interrupt("page_closed");
   });
 
   return {
@@ -190,9 +229,15 @@ export function createXiaohongshuPublishResultMonitor(
     async ready() {},
     arm() {
       if (!lifecycle.arm()) return;
-      submissionDeadline = clock.now() + RESULT_TIMEOUT_MS;
       void watchPageResult(++pageWatchRun);
     },
+    submissionAttempted() {
+      submissionObserved = true;
+      if (context.submissionMode === "automatic") {
+        submissionDeadline = clock.now() + RESULT_TIMEOUT_MS;
+      }
+    },
+    interrupt,
     stop,
   };
 }

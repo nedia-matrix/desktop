@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createPlaywrightSessionProbeClient } from "../src/index.js";
 
@@ -82,5 +82,22 @@ describe("Playwright session response probes", () => {
         timeoutMs: 100,
       }),
     ).resolves.toMatchObject({ status: 200 });
+  });
+
+  it("notifies scoped observers and removes the page listener on dispose", async () => {
+    const { client, pageEvents } = fixture();
+    const observed = vi.fn();
+    client.subscribeObservedResponses(observed);
+
+    pageEvents.emit(
+      "response",
+      accountResponse('{"data":{"userId":"kuaishou-42"}}'),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(observed).toHaveBeenCalledOnce();
+    expect(pageEvents.listenerCount("response")).toBe(1);
+    client.dispose();
+    expect(pageEvents.listenerCount("response")).toBe(0);
   });
 });

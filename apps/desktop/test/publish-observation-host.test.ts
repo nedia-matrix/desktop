@@ -5,9 +5,9 @@ import type {
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  PublishObservationHost,
+  PublishObservationManager,
   toPublishResultUpdate,
-} from "../src/main/publishing/publish-observation-host.js";
+} from "../src/main/publishing/observations/publish-observation-manager.js";
 
 function fakeMonitor() {
   const listeners = new Set<(event: PublishResultEvent) => void>();
@@ -18,6 +18,12 @@ function fakeMonitor() {
     },
     ready: vi.fn(async () => undefined),
     arm: vi.fn(),
+    submissionAttempted: vi.fn(),
+    interrupt: vi.fn(async () => {
+      for (const listener of listeners) {
+        listener({ kind: "cancelled", message: "closed" });
+      }
+    }),
     stop: vi.fn(),
   };
   return {
@@ -28,10 +34,10 @@ function fakeMonitor() {
   };
 }
 
-describe("PublishObservationHost", () => {
+describe("PublishObservationManager", () => {
   it("adds host identity without leaking it into the platform monitor", async () => {
-    const onEvent = vi.fn();
-    const host = new PublishObservationHost(onEvent);
+    const onEvent = vi.fn(async () => undefined);
+    const host = new PublishObservationManager(onEvent);
     const fake = fakeMonitor();
     const hosted = host.attach({
       publicationId: "publication-1",
@@ -43,20 +49,23 @@ describe("PublishObservationHost", () => {
     await hosted.ready();
     hosted.arm();
     fake.emit({ kind: "verifying", message: "checking" });
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledOnce());
 
     expect(fake.monitor.ready).toHaveBeenCalledOnce();
     expect(fake.monitor.arm).toHaveBeenCalledOnce();
-    expect(onEvent).toHaveBeenCalledWith({
-      observationId: hosted.id,
-      publicationId: "publication-1",
-      accountId: "account-1",
-      platformId: "platform-1",
-      result: { kind: "verifying", message: "checking" },
-    });
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        observationId: hosted.id,
+        publicationId: "publication-1",
+        accountId: "account-1",
+        platformId: "platform-1",
+        result: { kind: "verifying", message: "checking" },
+      }),
+    );
   });
 
-  it("stops the previous observation for the same account", () => {
-    const host = new PublishObservationHost(vi.fn());
+  it("stops the previous observation for the same account", async () => {
+    const host = new PublishObservationManager(vi.fn(async () => undefined));
     const first = fakeMonitor();
     const second = fakeMonitor();
     host.attach({
@@ -71,12 +80,12 @@ describe("PublishObservationHost", () => {
       platformId: "p",
       monitor: second.monitor,
     });
-    expect(first.monitor.stop).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(first.monitor.stop).toHaveBeenCalledOnce());
   });
 
-  it("reports an armed observation as uncertain when its browser closes", () => {
-    const onEvent = vi.fn();
-    const host = new PublishObservationHost(onEvent);
+  it("persists the monitor terminal result when its browser closes", async () => {
+    const onEvent = vi.fn(async () => undefined);
+    const host = new PublishObservationManager(onEvent);
     const fake = fakeMonitor();
     const hosted = host.attach({
       publicationId: "publication-1",
@@ -86,19 +95,19 @@ describe("PublishObservationHost", () => {
     });
     hosted.arm();
 
-    host.stop("a");
+    await host.stop("a");
 
     expect(onEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         publicationId: "publication-1",
-        result: expect.objectContaining({ kind: "uncertain" }),
+        result: expect.objectContaining({ kind: "cancelled" }),
       }),
     );
   });
 
-  it("can dispose an armed observation without hiding a caller-owned error", () => {
-    const onEvent = vi.fn();
-    const host = new PublishObservationHost(onEvent);
+  it("can dispose an armed observation without hiding a caller-owned error", async () => {
+    const onEvent = vi.fn(async () => undefined);
+    const host = new PublishObservationManager(onEvent);
     const fake = fakeMonitor();
     const hosted = host.attach({
       publicationId: "publication-1",
@@ -108,15 +117,15 @@ describe("PublishObservationHost", () => {
     });
     hosted.arm();
 
-    hosted.stop(false);
+    await hosted.stopSilently();
 
     expect(onEvent).not.toHaveBeenCalled();
     expect(fake.monitor.stop).toHaveBeenCalledOnce();
   });
 
-  it("releases its publication lease after a terminal result", () => {
+  it("releases its publication lease after a terminal result is durable", async () => {
     const onFinished = vi.fn();
-    const host = new PublishObservationHost(vi.fn());
+    const host = new PublishObservationManager(vi.fn(async () => undefined));
     const fake = fakeMonitor();
     const hosted = host.attach({
       publicationId: "publication-1",
@@ -128,18 +137,44 @@ describe("PublishObservationHost", () => {
     hosted.arm();
 
     fake.emit({ kind: "failed", message: "rejected" });
-    hosted.stop();
+    await vi.waitFor(() => expect(onFinished).toHaveBeenCalledOnce());
 
     expect(onFinished).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the publication lease while terminal persistence is pending", async () => {
+    let acknowledge = (): void => undefined;
+    const persistence = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const onFinished = vi.fn();
+    const host = new PublishObservationManager(() => persistence);
+    const fake = fakeMonitor();
+    host.attach({
+      publicationId: "publication-1",
+      accountId: "a",
+      platformId: "p",
+      monitor: fake.monitor,
+      onFinished,
+    });
+
+    fake.emit({ kind: "cancelled", message: "closed" });
+    await Promise.resolve();
+    expect(onFinished).not.toHaveBeenCalled();
+
+    acknowledge();
+    await vi.waitFor(() => expect(onFinished).toHaveBeenCalledOnce());
   });
 
   it("maps platform results to renderer updates at the host boundary", () => {
     expect(
       toPublishResultUpdate({
+        eventId: "event-1",
         observationId: "observation-1",
         publicationId: "publication-1",
         accountId: "account-1",
         platformId: "douyin",
+        sequence: 1,
         result: {
           kind: "published",
           contentId: "work-1",

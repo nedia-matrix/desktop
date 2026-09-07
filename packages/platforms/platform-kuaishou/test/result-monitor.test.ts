@@ -214,7 +214,7 @@ describe("Kuaishou publish result monitor", () => {
     });
   });
 
-  it("reports an armed window close as uncertain", async () => {
+  it("reports an armed window close without submission evidence as cancelled", async () => {
     const test = fixture();
     const monitor = createKuaishouPublishResultMonitor(test.context);
     const events: PublishResultEvent[] = [];
@@ -222,7 +222,9 @@ describe("Kuaishou publish result monitor", () => {
     await monitor.ready();
     monitor.arm();
     test.close();
-    expect(events).toEqual([expect.objectContaining({ kind: "uncertain" })]);
+    await vi.waitFor(() => {
+      expect(events).toEqual([expect.objectContaining({ kind: "cancelled" })]);
+    });
   });
 
   it("times out an automatic submission without a terminal refresh", async () => {
@@ -234,6 +236,7 @@ describe("Kuaishou publish result monitor", () => {
     await monitor.ready();
 
     monitor.arm();
+    monitor.submissionAttempted();
     await vi.waitFor(() => {
       expect(events).toContainEqual(
         expect.objectContaining({ kind: "uncertain" }),

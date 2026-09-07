@@ -56,4 +56,40 @@ describe("definePlatformModule", () => {
       /outside allowed platform hosts/,
     );
   });
+
+  it("accepts numeric publish constraints", () => {
+    const input = moduleInput() as ReturnType<typeof moduleInput> & {
+      publishing: unknown;
+    };
+    input.publishing = publishingCapability({
+      constraints: { titleMaxLength: 20 },
+    });
+    expect(() => definePlatformModule(input as never)).not.toThrow();
+  });
+
+  it("rejects non-positive publish constraints", () => {
+    const input = moduleInput() as ReturnType<typeof moduleInput> & {
+      publishing: unknown;
+    };
+    input.publishing = publishingCapability({
+      constraints: { titleMaxLength: 0 },
+    });
+    expect(() => definePlatformModule(input as never)).toThrow();
+  });
 });
+
+function publishingCapability(form: { constraints: Record<string, unknown> }) {
+  return {
+    implementationStatus: "fixture-tested",
+    forms: {
+      video: {
+        ...form,
+        submissionModes: ["manual_confirmation"],
+        automation: { prepare: {}, submit: {} },
+      },
+    },
+    createResultMonitor() {
+      throw new Error("unused fixture");
+    },
+  };
+}

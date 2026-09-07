@@ -124,15 +124,14 @@ describe("PublishingService", () => {
     expect(published.publication.platformContentId).toBe("work-1");
   });
 
-  it("marks interrupted manual submission as uncertain on restart", () => {
+  it("marks an interrupted manual task without submission evidence as cancelled", () => {
     const { service } = fixture();
     const preparing = start(service);
     service.markAwaitingConfirmation(preparing.publication.id);
 
     const recovered = service.recoverInterrupted();
 
-    expect(recovered[0]?.publication.state).toBe("uncertain");
-    expect(recovered[0]?.lastMessage).toContain("平台核实");
+    expect(recovered[0]?.publication.state).toBe("cancelled");
   });
 
   it("accepts a retried terminal observation after the first save may have succeeded", () => {
@@ -158,9 +157,19 @@ describe("PublishingService", () => {
     const { service } = fixture();
     const preparing = start(service);
 
-    const submitting = service.markSubmitting(preparing.publication.id);
+    service.markSubmitting(preparing.publication.id);
+    const submitting = service.recordObservation(
+      preparing.publication.id,
+      {
+        kind: "submission_attempted",
+        source: "application_commit",
+        message: "即将点击发布",
+      },
+      1,
+    );
 
     expect(submitting.publication.state).toBe("submitting");
+    expect(submitting.submissionEvidence).toBe("submission_attempted");
     expect(service.recoverInterrupted()[0]?.publication.state).toBe(
       "uncertain",
     );

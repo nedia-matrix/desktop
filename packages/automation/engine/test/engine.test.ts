@@ -208,13 +208,42 @@ describe("automation definitions and execution", () => {
     expect(driver.actions).toEqual(["position-click:submit:0.65:0.5"]);
   });
 
+  it("waits for the durable submission boundary before clicking", async () => {
+    const workflow = defineWorkflow({
+      id: "publish.submit",
+      page,
+      steps: [
+        {
+          kind: "click",
+          targetId: "submit",
+          commitBoundary: "submission",
+        },
+      ],
+    });
+    const driver = new MemoryDriver();
+
+    await executeWorkflow(
+      workflow,
+      driver,
+      {},
+      {
+        beforeCommit: async ({ workflowId, stepIndex, boundary }) => {
+          driver.actions.push(`commit:${workflowId}:${stepIndex}:${boundary}`);
+        },
+      },
+    );
+
+    expect(driver.actions).toEqual([
+      "commit:publish.submit:0:submission",
+      "click:submit",
+    ]);
+  });
+
   it("skips an optional click when its target does not appear", async () => {
     const workflow = defineWorkflow({
       id: "publish.confirm",
       page,
-      steps: [
-        { kind: "click-if-present", targetId: "submit", timeoutMs: 0 },
-      ],
+      steps: [{ kind: "click-if-present", targetId: "submit", timeoutMs: 0 }],
     });
     const driver = new MemoryDriver();
     driver.query = async () => [];

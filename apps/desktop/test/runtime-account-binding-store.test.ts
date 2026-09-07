@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseStoredRuntimeAccountBindings } from "../src/main/local-runtime/runtime-account-binding-store.js";
+import { parseStoredRuntimeAccountBindings } from "../src/main/runtime-api/infrastructure/electron-runtime-binding-repository.js";
 
 describe("runtime account binding store", () => {
   it("keeps only complete stable identity mappings", () => {

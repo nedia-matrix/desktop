@@ -1,0 +1,31 @@
+import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
+
+export function toRuntimeAccountSession(
+  account: PlatformAccountSummary,
+  replacementAlias?: { candidateAccountId: string },
+) {
+  return {
+    runtimeAccountId: account.id,
+    platform: account.platformId,
+    loggedIn: account.status === "authenticated",
+    status:
+      account.status === "authenticated"
+        ? ("connected" as const)
+        : account.status === "login_required"
+          ? ("expired" as const)
+          : ("unknown" as const),
+    nickname: account.nickname,
+    externalAccountId: account.externalAccountId,
+    avatarUrl: account.avatarUrl,
+    accountInfo: account.accountInfo ?? [],
+    lastVerifiedAt: account.lastVerifiedAt,
+    ...(replacementAlias
+      ? {
+          resolution: {
+            kind: "existing_account_profile_replaced" as const,
+            requestedRuntimeAccountId: replacementAlias.candidateAccountId,
+          },
+        }
+      : {}),
+  };
+}

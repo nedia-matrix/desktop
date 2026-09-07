@@ -8,11 +8,11 @@ import type {
 } from "@nedia-matrix/ipc-contracts";
 
 import {
-  LocalRuntimeServer,
+  LocalRuntimeHttpServer,
   type LocalRuntimeHandshake,
-} from "../src/main/local-runtime/local-runtime-server.js";
-import { AccountReplacedError } from "../src/main/accounts/account-application.js";
-import type { RuntimeAccountBinding } from "../src/main/local-runtime/runtime-account-binding-store.js";
+} from "../src/main/runtime-api/http/local-runtime-http-server.js";
+import { AccountReplacedError } from "../src/main/accounts/application/account-service.js";
+import type { RuntimeAccountBinding } from "../src/main/runtime-api/infrastructure/electron-runtime-binding-repository.js";
 
 const origin = "https://www.example.com";
 
@@ -180,18 +180,18 @@ function createRuntimeApplication(
         title: request.title,
         body: request.body,
         assets: [{ name: "video.mp4", size: 42 }],
-        state: "submitting",
+        state: "awaiting_confirmation",
         transitions: [],
         rulesVersion: "test",
         retained: false,
         createdAt: "2026-08-10T00:00:00.000Z",
         updatedAt: "2026-08-10T00:00:00.000Z",
-        lastMessage: "已提交",
+        lastMessage: "请前往平台窗口检查并发布",
         platformContentId: null,
         platformContentUrl: null,
       });
       return {
-        status: "submission_started" as const,
+        status: "ready_for_review" as const,
         mediaCount: 1,
         profileId: "profile-1",
         publishObservationId: "observation-1",
@@ -373,8 +373,8 @@ function createRuntimeApplication(
   };
 }
 
-describe("LocalRuntimeServer", () => {
-  const servers: LocalRuntimeServer[] = [];
+describe("LocalRuntimeHttpServer", () => {
+  const servers: LocalRuntimeHttpServer[] = [];
 
   afterEach(async () => {
     await Promise.all(servers.splice(0).map((server) => server.stop()));
@@ -382,7 +382,7 @@ describe("LocalRuntimeServer", () => {
 
   it("reports whether the local runtime is listening", async () => {
     const runtime = createRuntimeApplication([]);
-    const server = new LocalRuntimeServer({
+    const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
       port: 0,
@@ -415,7 +415,7 @@ describe("LocalRuntimeServer", () => {
 
   it("stops without waiting for an active request to finish", async () => {
     const runtime = createRuntimeApplication([]);
-    const server = new LocalRuntimeServer({
+    const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
       port: 0,
@@ -450,7 +450,7 @@ describe("LocalRuntimeServer", () => {
 
   it("discovers the runtime and exposes accounts without authorization", async () => {
     const runtime = createRuntimeApplication();
-    const server = new LocalRuntimeServer({
+    const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
       port: 0,
@@ -498,7 +498,7 @@ describe("LocalRuntimeServer", () => {
   it("persists an explicit server-channel to local-runtime account binding", async () => {
     const runtime = createRuntimeApplication();
     const accountBindings = runtime.accountBindings;
-    const server = new LocalRuntimeServer({
+    const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
       port: 0,
@@ -534,7 +534,7 @@ describe("LocalRuntimeServer", () => {
   it("creates, opens, refreshes, and removes an isolated account", async () => {
     const runtime = createRuntimeApplication([]);
     const accountBindings = runtime.accountBindings;
-    const server = new LocalRuntimeServer({
+    const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
       port: 0,
@@ -607,7 +607,7 @@ describe("LocalRuntimeServer", () => {
         survivingAccountId: account.id,
       },
     });
-    const server = new LocalRuntimeServer({
+    const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
       port: 0,
@@ -656,7 +656,7 @@ describe("LocalRuntimeServer", () => {
       externalAccountId: "external-1",
       boundAt: "2026-08-10T01:00:00.000Z",
     });
-    const server = new LocalRuntimeServer({
+    const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
       port: 0,
@@ -723,7 +723,7 @@ describe("LocalRuntimeServer", () => {
       externalAccountId: "external-1",
       boundAt: "2026-08-10T01:00:00.000Z",
     });
-    const server = new LocalRuntimeServer({
+    const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
       port: 0,
@@ -761,7 +761,7 @@ describe("LocalRuntimeServer", () => {
     expect(created.status).toBe(202);
     expect(await created.json()).toMatchObject({
       requestId: "request-1",
-      state: "submitting",
+      state: "awaiting_confirmation",
     });
     expect(
       runtime.actions.filter((action) => action.startsWith("publish:")),
@@ -811,7 +811,7 @@ describe("LocalRuntimeServer", () => {
       externalAccountId: "external-1",
       boundAt: "2026-08-10T01:00:00.000Z",
     });
-    const server = new LocalRuntimeServer({
+    const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
       port: 0,
@@ -851,7 +851,7 @@ describe("LocalRuntimeServer", () => {
 
   it("allows missing origins and rejects forged Host headers", async () => {
     const runtime = createRuntimeApplication([]);
-    const server = new LocalRuntimeServer({
+    const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
       port: 0,

@@ -11,6 +11,12 @@ import type { PublishResultEvent } from "@nedia-matrix/platform-core";
 export type PublicationContentForm = "video" | "imageText";
 export type PublicationSubmissionMode =
   "automatic" | "manual_confirmation" | "legacy_unknown";
+export type SubmissionEvidence =
+  | "none"
+  | "submission_attempted"
+  | "verification_observed"
+  | "accepted"
+  | "legacy_unknown";
 
 export interface PublicationAssetSnapshot {
   id: string;
@@ -33,6 +39,8 @@ export interface PublicationRecord {
   contentForm: PublicationContentForm;
   tags: readonly string[];
   submissionMode: PublicationSubmissionMode;
+  submissionEvidence?: SubmissionEvidence;
+  lastObservationSequence?: number;
   retained: boolean;
   assets: readonly PublicationAssetSnapshot[];
   rulesVersion: string;
@@ -138,7 +146,9 @@ export class PublishingService {
       contentRevision,
       contentForm: input.contentForm,
       tags: [...(input.tags ?? [])],
-      submissionMode: input.submissionMode ?? "automatic",
+      submissionMode: input.submissionMode ?? "manual_confirmation",
+      submissionEvidence: "none",
+      lastObservationSequence: 0,
       retained: false,
       assets,
       rulesVersion: input.rulesVersion,
@@ -176,38 +186,89 @@ export class PublishingService {
   recordObservation(
     publicationId: string,
     result: PublishResultEvent,
+    sequence?: number,
   ): PublicationRecord {
     const current = this.require(publicationId);
+    const currentSequence = current.lastObservationSequence ?? 0;
+    if (sequence !== undefined && sequence <= currentSequence) return current;
     if (
       (result.kind === "published" &&
         current.publication.state === "published") ||
       (result.kind === "failed" && current.publication.state === "failed") ||
       (result.kind === "uncertain" && current.publication.state === "uncertain")
     ) {
-      return current;
+      return sequence === undefined
+        ? current
+        : this.save({ ...current, lastObservationSequence: sequence });
+    }
+    const evidence = promoteEvidence(
+      current.submissionEvidence ?? "legacy_unknown",
+      evidenceFor(result),
+    );
+    let record: PublicationRecord = {
+      ...current,
+      submissionEvidence: evidence,
+      lastObservationSequence: sequence ?? currentSequence,
+    };
+    if (result.kind === "submission_attempted") {
+      if (
+        record.publication.state === "preparing" ||
+        record.publication.state === "awaiting_confirmation"
+      ) {
+        record = this.advance(record, "submitting", result.message);
+      } else {
+        record = { ...record, lastMessage: result.message };
+      }
+      return this.save(record);
     }
     if (result.kind === "verification_required") {
-      return this.save({ ...current, lastMessage: result.message });
+      return this.save({ ...record, lastMessage: result.message });
     }
     if (result.kind === "verifying") {
-      if (current.publication.state === "verifying") {
-        return this.save({ ...current, lastMessage: result.message });
+      if (record.publication.state === "verifying") {
+        return this.save({ ...record, lastMessage: result.message });
       }
-      if (current.publication.state === "awaiting_confirmation") {
-        this.transition(publicationId, "submitting");
+      if (
+        record.publication.state === "preparing" ||
+        record.publication.state === "awaiting_confirmation"
+      ) {
+        record = this.advance(record, "submitting");
       }
-      return this.transition(publicationId, "verifying", result.message);
+      return this.save(this.advance(record, "verifying", result.message));
+    }
+    if (result.kind === "cancelled") {
+      if (evidence === "none") {
+        return this.save(this.advance(record, "cancelled", result.message));
+      }
+      if (record.publication.state === "preparing") {
+        record = this.advance(record, "submitting");
+      }
+      return this.save(
+        this.advance(
+          record,
+          "uncertain",
+          "观察结束前已存在提交证据，请先在平台核实",
+        ),
+      );
     }
     if (result.kind === "failed" || result.kind === "uncertain") {
-      return this.transition(publicationId, result.kind, result.message);
+      if (
+        result.kind === "uncertain" &&
+        record.publication.state === "preparing"
+      ) {
+        record = this.advance(record, "submitting");
+      }
+      return this.save(this.advance(record, result.kind, result.message));
     }
 
-    let record = current;
-    if (record.publication.state === "awaiting_confirmation") {
-      record = this.transition(publicationId, "submitting");
+    if (
+      record.publication.state === "preparing" ||
+      record.publication.state === "awaiting_confirmation"
+    ) {
+      record = this.advance(record, "submitting");
     }
     if (record.publication.state === "submitting") {
-      record = this.transition(publicationId, "verifying");
+      record = this.advance(record, "verifying");
     }
     const published = transitionPublication(
       record.publication,
@@ -233,21 +294,48 @@ export class PublishingService {
     const recovered: PublicationRecord[] = [];
     for (const record of this.repository.list()) {
       if (record.publication.state === "preparing") {
-        recovered.push(
-          this.transition(
-            record.publication.id,
-            "failed",
-            "应用在草稿准备完成前退出",
-          ),
-        );
+        if (this.evidence(record) === "none") {
+          recovered.push(
+            this.transition(
+              record.publication.id,
+              "failed",
+              "应用在草稿准备完成前退出",
+            ),
+          );
+        } else {
+          const submitting = this.advance(record, "submitting");
+          recovered.push(
+            this.save(
+              this.advance(
+                submitting,
+                "uncertain",
+                "应用重启后无法排除已经提交，请先在平台核实",
+              ),
+            ),
+          );
+        }
       } else if (recoverableActiveStates.includes(record.publication.state)) {
-        recovered.push(
-          this.transition(
-            record.publication.id,
-            "uncertain",
-            "应用重启后无法恢复发布结果监听，请先在平台核实",
-          ),
-        );
+        if (
+          this.evidence(record) === "none" &&
+          (record.publication.state === "awaiting_confirmation" ||
+            record.publication.state === "submitting")
+        ) {
+          recovered.push(
+            this.transition(
+              record.publication.id,
+              "cancelled",
+              "应用退出前没有观察到提交尝试",
+            ),
+          );
+        } else {
+          recovered.push(
+            this.transition(
+              record.publication.id,
+              "uncertain",
+              "应用重启后无法恢复发布结果监听，请先在平台核实",
+            ),
+          );
+        }
       }
     }
     return recovered;
@@ -272,6 +360,27 @@ export class PublishingService {
     });
   }
 
+  private advance(
+    record: PublicationRecord,
+    state: PublicationState,
+    message?: string,
+  ): PublicationRecord {
+    return {
+      ...record,
+      publication: transitionPublication(
+        record.publication,
+        state,
+        this.now(),
+        message,
+      ),
+      ...(message === undefined ? {} : { lastMessage: message }),
+    };
+  }
+
+  private evidence(record: PublicationRecord): SubmissionEvidence {
+    return record.submissionEvidence ?? "legacy_unknown";
+  }
+
   private require(publicationId: string): PublicationRecord {
     const record = this.repository.get(publicationId);
     if (!record) throw new TypeError("Publication does not exist");
@@ -287,4 +396,39 @@ export class PublishingService {
   private now(): string {
     return this.clock.now().toISOString();
   }
+}
+
+const evidenceRanks: Readonly<
+  Record<Exclude<SubmissionEvidence, "legacy_unknown">, number>
+> = {
+  none: 0,
+  submission_attempted: 1,
+  verification_observed: 2,
+  accepted: 3,
+};
+
+function evidenceFor(
+  result: PublishResultEvent,
+): Exclude<SubmissionEvidence, "legacy_unknown"> {
+  switch (result.kind) {
+    case "submission_attempted":
+      return "submission_attempted";
+    case "verification_required":
+      return "verification_observed";
+    case "verifying":
+    case "published":
+    case "failed":
+      return "accepted";
+    case "uncertain":
+    case "cancelled":
+      return "none";
+  }
+}
+
+function promoteEvidence(
+  current: SubmissionEvidence,
+  next: Exclude<SubmissionEvidence, "legacy_unknown">,
+): SubmissionEvidence {
+  if (current === "legacy_unknown") return next === "none" ? current : next;
+  return evidenceRanks[next] > evidenceRanks[current] ? next : current;
 }

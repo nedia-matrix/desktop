@@ -4,12 +4,17 @@ import type {
   SessionProbeResponse,
 } from "@nedia-matrix/automation-contracts";
 import type { PlatformBrowserPolicy } from "@nedia-matrix/platform-core";
-import type { BrowserContext, Page } from "playwright";
+import type { BrowserContext, Page, Response } from "playwright";
 
 import { isAllowedPlatformNavigation } from "./navigation-policy.js";
 
 const MAX_SESSION_RESPONSE_BYTES = 2_000_000;
 const OBSERVED_RESPONSE_REPLAY_WINDOW_MS = 10_000;
+
+export interface PlaywrightSessionProbeClient extends SessionProbeClient {
+  subscribeObservedResponses(listener: () => void): () => void;
+  dispose(): void;
+}
 
 function responseKey(method: string, url: string): string {
   const parsed = new URL(url);
@@ -38,7 +43,7 @@ export function createPlaywrightSessionProbeClient(
   page: Page,
   browser: PlatformBrowserPolicy,
   detection: SessionDetectionPlan,
-): SessionProbeClient {
+): PlaywrightSessionProbeClient {
   const observedResponses = new Map<
     string,
     { response: SessionProbeResponse; observedAt: number }
@@ -47,6 +52,8 @@ export function createPlaywrightSessionProbeClient(
     string,
     Set<(response: SessionProbeResponse | null) => void>
   >();
+  const observedResponseListeners = new Set<() => void>();
+  let disposed = false;
 
   const configuredResponseKeys = new Set(
     detection.probes.flatMap((probe) =>
@@ -56,7 +63,8 @@ export function createPlaywrightSessionProbeClient(
     ),
   );
 
-  page.on("response", (response) => {
+  const handleResponse = (response: Response) => {
+    if (disposed) return;
     const key = responseKey(response.request().method(), response.url());
     if (!configuredResponseKeys.has(key)) return;
     void response
@@ -69,12 +77,14 @@ export function createPlaywrightSessionProbeClient(
         });
         for (const resolve of waiters.get(key) ?? []) resolve(parsed);
         waiters.delete(key);
+        for (const listener of observedResponseListeners) listener();
       })
       .catch(() => {
         for (const resolve of waiters.get(key) ?? []) resolve(null);
         waiters.delete(key);
       });
-  });
+  };
+  if (configuredResponseKeys.size > 0) page.on("response", handleResponse);
 
   return {
     async fetchJson(url) {
@@ -123,6 +133,7 @@ export function createPlaywrightSessionProbeClient(
       );
     },
     async waitForJsonResponse({ method, url, timeoutMs }) {
+      if (disposed) return null;
       if (!isAllowedPlatformNavigation(url, browser)) {
         throw new Error(
           "Session response probe is outside the platform boundary",
@@ -158,6 +169,24 @@ export function createPlaywrightSessionProbeClient(
         listeners.add(finish);
         const timer = setTimeout(() => finish(null), timeoutMs);
       });
+    },
+    subscribeObservedResponses(listener) {
+      if (disposed) return () => undefined;
+      observedResponseListeners.add(listener);
+      return () => observedResponseListeners.delete(listener);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      if (configuredResponseKeys.size > 0) {
+        page.off("response", handleResponse);
+      }
+      observedResponses.clear();
+      observedResponseListeners.clear();
+      for (const listeners of waiters.values()) {
+        for (const resolve of listeners) resolve(null);
+      }
+      waiters.clear();
     },
   };
 }

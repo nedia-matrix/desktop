@@ -93,7 +93,7 @@ const allowedTransitions: Readonly<
   draft: ["validated", "cancelled"],
   validated: ["scheduled", "preparing", "submitting", "rejected", "cancelled"],
   scheduled: ["preparing", "submitting", "cancelled"],
-  preparing: ["awaiting_confirmation", "submitting", "failed"],
+  preparing: ["awaiting_confirmation", "submitting", "failed", "cancelled"],
   awaiting_confirmation: [
     "submitting",
     "verifying",
@@ -102,7 +102,7 @@ const allowedTransitions: Readonly<
     "failed",
     "cancelled",
   ],
-  submitting: ["verifying", "uncertain", "failed"],
+  submitting: ["verifying", "uncertain", "failed", "cancelled"],
   verifying: ["published", "uncertain", "failed"],
   published: [],
   uncertain: ["verifying", "published", "failed"],

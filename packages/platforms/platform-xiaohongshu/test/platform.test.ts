@@ -3,6 +3,21 @@ import { describe, expect, it } from "vitest";
 import { xiaohongshuPlatformModule } from "../src/index.js";
 
 describe("Xiaohongshu platform workflow", () => {
+  it("uses personal_info as the only account identity source", () => {
+    expect(xiaohongshuPlatformModule.accounts.detection.probes).toEqual([
+      expect.objectContaining({
+        identityScheme: "xiaohongshu.red_num",
+        source: {
+          kind: "request",
+          url: "https://creator.xiaohongshu.com/api/galaxy/creator/home/personal_info",
+        },
+      }),
+    ]);
+    expect(
+      xiaohongshuPlatformModule.accounts.detection.domFallback,
+    ).toBeUndefined();
+  });
+
   it("submits through the closed-shadow publish component host", () => {
     const submit =
       xiaohongshuPlatformModule.publishing?.forms.imageText?.automation.submit;

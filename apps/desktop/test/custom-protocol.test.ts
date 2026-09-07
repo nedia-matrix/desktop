@@ -4,7 +4,7 @@ import {
   findNediaMatrixOpenUrl,
   isNediaMatrixOpenUrl,
   NEDIA_MATRIX_OPEN_URL,
-} from "../src/main/local-runtime/custom-protocol.js";
+} from "../src/main/shell/protocol/custom-protocol.js";
 
 describe("nedia-matrix open protocol", () => {
   it("accepts only the parameter-free open action", () => {

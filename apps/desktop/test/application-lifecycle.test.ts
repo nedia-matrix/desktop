@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ApplicationLifecycle } from "../src/main/application-lifecycle.js";
+import { ApplicationLifecycle } from "../src/main/bootstrap/application-lifecycle.js";
 
 describe("application lifecycle", () => {
   it("opens windows immediately while the application is running", () => {

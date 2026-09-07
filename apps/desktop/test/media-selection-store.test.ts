@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MediaSelectionStore,
   MediaSelectionUnavailableError,
-} from "../src/main/publishing/media-selection-store.js";
+} from "../src/main/publishing/infrastructure/media-selection-store.js";
 
 afterEach(() => {
   vi.useRealTimers();

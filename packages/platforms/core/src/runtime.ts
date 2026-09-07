@@ -10,6 +10,15 @@ export interface ObservedHttpResponse {
   readText(maxBytes: number): Promise<string>;
 }
 
+export interface ObservedHttpRequest {
+  readonly method: string;
+  readonly url: string;
+}
+
+export interface RequestStream {
+  subscribe(listener: (request: ObservedHttpRequest) => void): Unsubscribe;
+}
+
 export interface ResponseStream {
   subscribe(listener: (response: ObservedHttpResponse) => void): Unsubscribe;
 }
@@ -25,6 +34,7 @@ export interface ObservationClock {
 }
 
 export interface PublishObservationSession {
+  requests?: RequestStream;
   responses: ResponseStream;
   page: ObservationPage;
 }
@@ -50,16 +60,27 @@ export interface PublishMonitorDiagnostics {
 }
 
 export type PublishResultEvent =
+  | {
+      kind: "submission_attempted";
+      source: "application_commit" | "page_request";
+      message: string;
+    }
   | { kind: "verification_required"; message: string }
   | { kind: "verifying"; message: string }
   | { kind: "published"; contentId: string | null; contentUrl: string | null }
   | { kind: "failed"; message: string }
-  | { kind: "uncertain"; message: string };
+  | { kind: "uncertain"; message: string }
+  | { kind: "cancelled"; message: string };
+
+export type PublishInterruptionReason =
+  "page_closed" | "observation_interrupted" | "desktop_shutdown";
 
 export interface PublishResultMonitor {
   subscribe(listener: (event: PublishResultEvent) => void): Unsubscribe;
   ready(): Promise<void>;
   arm(): void;
+  submissionAttempted(): void;
+  interrupt(reason: PublishInterruptionReason): Promise<void>;
   stop(): void;
 }
 

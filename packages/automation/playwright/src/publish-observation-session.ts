@@ -1,4 +1,5 @@
 import type {
+  ObservedHttpRequest,
   ObservedHttpResponse,
   PublishObservationSession,
 } from "@nedia-matrix/platform-core";
@@ -99,6 +100,23 @@ export async function createPlaywrightPublishObservationSession(
     requestMethods.delete(requestId);
   });
   return {
+    requests: {
+      subscribe(listener) {
+        const handleRequest = ({
+          request,
+        }: Parameters<
+          Parameters<typeof cdp.on<"Network.requestWillBeSent">>[1]
+        >[0]): void => {
+          const observed: ObservedHttpRequest = {
+            method: request.method,
+            url: request.url,
+          };
+          listener(observed);
+        };
+        cdp.on("Network.requestWillBeSent", handleRequest);
+        return () => cdp.off("Network.requestWillBeSent", handleRequest);
+      },
+    },
     responses: {
       subscribe(listener) {
         const handleResponse = ({

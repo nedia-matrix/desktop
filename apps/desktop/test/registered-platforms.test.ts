@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   platformFor,
   platformSummaries,
-} from "../src/main/registered-platforms.js";
+} from "../src/main/platforms/platform-registry.js";
 
 describe("registered desktop platforms", () => {
   it("exposes capability-oriented modules through the registry", () => {
@@ -13,6 +13,22 @@ describe("registered desktop platforms", () => {
       "kuaishou",
     ]);
     expect(platformFor("douyin").publishing?.forms.video).toBeDefined();
+    expect(platformFor("douyin").publishing?.forms.video).toMatchObject({
+      constraints: {
+        titleMaxLength: 20,
+        bodyMaxLength: 1_000,
+        mediaMaxCount: 1,
+      },
+    });
+    expect(
+      platformFor("xiaohongshu").publishing?.forms.imageText,
+    ).toMatchObject({
+      constraints: {
+        titleMaxLength: 20,
+        bodyMaxLength: 1_000,
+        mediaMaxCount: 18,
+      },
+    });
     expect(platformFor("douyin").publishing?.createResultMonitor).toBeTypeOf(
       "function",
     );
@@ -27,14 +43,24 @@ describe("registered desktop platforms", () => {
         id: "kuaishou",
         implementationStatus: "live-tested",
         publishCapabilities: [
-          {
+          expect.objectContaining({
             contentForm: "video",
             submissionModes: ["automatic", "manual_confirmation"],
-          },
-          {
+            constraints: expect.objectContaining({
+              titleMaxLength: 20,
+              bodyMaxLength: 480,
+              mediaMaxCount: 1,
+            }),
+          }),
+          expect.objectContaining({
             contentForm: "imageText",
             submissionModes: ["automatic", "manual_confirmation"],
-          },
+            constraints: expect.objectContaining({
+              titleMaxLength: 20,
+              bodyMaxLength: 480,
+              mediaMaxCount: 31,
+            }),
+          }),
         ],
       }),
     );

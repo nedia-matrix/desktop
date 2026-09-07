@@ -191,7 +191,13 @@ const prepareImageText = defineWorkflow({
 const submit = defineWorkflow({
   id: "publish.submit",
   page: publishPage,
-  steps: [{ kind: "click", targetId: "publish.submit" }],
+  steps: [
+    {
+      kind: "click",
+      targetId: "publish.submit",
+      commitBoundary: "submission",
+    },
+  ],
 });
 
 const sessionDetection = defineSessionDetectionPlan({
@@ -245,7 +251,7 @@ const sessionDetection = defineSessionDetectionPlan({
 export const kuaishouPlatformModule = definePlatformModule({
   id: "kuaishou",
   displayName: "快手",
-  rulesVersion: "1.2.1-work-id-priority",
+  rulesVersion: "1.3.0-title-body-constraints",
   browser: {
     startUrl: "https://cp.kuaishou.com/profile",
     allowedHostSuffixes: ["kuaishou.com"],
@@ -266,14 +272,22 @@ export const kuaishouPlatformModule = definePlatformModule({
     implementationStatus: "live-tested",
     forms: {
       video: {
-        constraints: { mediaMaxCount: 1 },
+        constraints: {
+          titleMaxLength: 20,
+          bodyMaxLength: 480,
+          mediaMaxCount: 1,
+        },
         tagPolicy: { placement: "inline" },
         submissionModes: ["automatic", "manual_confirmation"],
         descriptionComposition: { parts: ["title", "body"], separator: " " },
         automation: { prepare: prepareVideo, submit },
       },
       imageText: {
-        constraints: { mediaMaxCount: 18 },
+        constraints: {
+          titleMaxLength: 20,
+          bodyMaxLength: 480,
+          mediaMaxCount: 31,
+        },
         tagPolicy: { placement: "inline" },
         submissionModes: ["automatic", "manual_confirmation"],
         descriptionComposition: { parts: ["title", "body"], separator: " " },

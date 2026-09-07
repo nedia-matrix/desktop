@@ -7,7 +7,7 @@ export interface PreparedPublishText {
 }
 
 export function composePublishDescription(
-  form: PlatformPublishFormCapability,
+  form: Pick<PlatformPublishFormCapability, "descriptionComposition">,
   input: { title: string; body: string },
 ): string {
   const composition = form.descriptionComposition;
@@ -19,7 +19,7 @@ export function composePublishDescription(
 }
 
 export function preparePublishText(
-  form: PlatformPublishFormCapability,
+  form: Pick<PlatformPublishFormCapability, "tagPolicy">,
   body: string,
   requestedTags: readonly string[] | undefined,
 ): PreparedPublishText {

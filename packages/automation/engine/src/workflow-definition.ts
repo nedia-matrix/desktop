@@ -19,17 +19,23 @@ export const workflowStepSchema = z.discriminatedUnion("kind", [
     targetId: z.string().min(1),
     inputKey: z.string().min(1),
   }),
-  z.object({ kind: z.literal("click"), targetId: z.string().min(1) }),
+  z.object({
+    kind: z.literal("click"),
+    targetId: z.string().min(1),
+    commitBoundary: z.literal("submission").optional(),
+  }),
   z.object({
     kind: z.literal("click-position"),
     targetId: z.string().min(1),
     xRatio: z.number().min(0).max(1),
     yRatio: z.number().min(0).max(1),
+    commitBoundary: z.literal("submission").optional(),
   }),
   z.object({
     kind: z.literal("click-if-present"),
     targetId: z.string().min(1),
     timeoutMs: z.number().int().nonnegative().default(3_000),
+    commitBoundary: z.literal("submission").optional(),
   }),
   z.object({
     kind: z.literal("click-closed-shadow"),

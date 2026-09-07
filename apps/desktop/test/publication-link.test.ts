@@ -2,7 +2,7 @@ import type { PublicationRecord } from "@nedia-matrix/application-publishing";
 import type { PlatformModule } from "@nedia-matrix/platform-core";
 import { describe, expect, it } from "vitest";
 
-import { requireSafePublicationUrl } from "../src/main/publishing/publication-link.js";
+import { requireSafePublicationUrl } from "../src/main/publishing/application/publication-link.js";
 
 const platform = {
   browser: {

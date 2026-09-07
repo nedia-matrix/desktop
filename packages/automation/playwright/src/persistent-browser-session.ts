@@ -2,10 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
-import type {
-  SessionDetectionPlan,
-  SessionProbeClient,
-} from "@nedia-matrix/automation-contracts";
+import type { SessionDetectionPlan } from "@nedia-matrix/automation-contracts";
 import type {
   PlatformBrowserPolicy,
   PublishObservationSession,
@@ -15,7 +12,10 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 import { PlaywrightAutomationDriver } from "./automation-driver.js";
 import { isAllowedPlatformNavigation } from "./navigation-policy.js";
 import { createPlaywrightPublishObservationSession } from "./publish-observation-session.js";
-import { createPlaywrightSessionProbeClient } from "./session-probe-client.js";
+import {
+  createPlaywrightSessionProbeClient,
+  type PlaywrightSessionProbeClient,
+} from "./session-probe-client.js";
 
 export interface OpenPersistentBrowserSessionOptions {
   browser: PlatformBrowserPolicy;
@@ -31,7 +31,7 @@ export interface OpenedPersistentBrowserSession {
   context: BrowserContext;
   page: Page;
   driver: PlaywrightAutomationDriver;
-  sessionProbeClient: SessionProbeClient;
+  sessionProbeClient: PlaywrightSessionProbeClient;
   observationSession: PublishObservationSession;
   focus(): Promise<void>;
   close(): Promise<void>;
@@ -126,7 +126,6 @@ export async function openPersistentBrowserSession(
         waitUntil: "domcontentloaded",
       });
     }
-    await page.bringToFront();
 
     const driver = new PlaywrightAutomationDriver(
       page,
@@ -148,6 +147,7 @@ export async function openPersistentBrowserSession(
         await page.bringToFront();
       },
       async close() {
+        sessionProbeClient.dispose();
         await context.close();
       },
     };

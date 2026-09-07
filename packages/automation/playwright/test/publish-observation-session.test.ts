@@ -41,12 +41,17 @@ describe("Playwright publish observation adapter", () => {
     const session = await fake.create();
     const responses: Array<{ readText(maxBytes: number): Promise<string> }> =
       [];
+    const requests: Array<{ method: string; url: string }> = [];
+    session.requests?.subscribe((request) => requests.push(request));
     session.responses.subscribe((response) => responses.push(response));
 
     fake.bufferedBodies.set("request-1", "{}");
     fake.cdpEvents.emit("Network.requestWillBeSent", {
       requestId: "request-1",
-      request: { method: "POST" },
+      request: {
+        method: "POST",
+        url: "https://creator.example.test/publish",
+      },
     });
     fake.cdpEvents.emit("Network.responseReceived", {
       requestId: "request-1",
@@ -65,6 +70,12 @@ describe("Playwright publish observation adapter", () => {
       requestId: "request-1",
     });
     await expect(body).resolves.toBe("{}");
+    expect(requests).toEqual([
+      {
+        method: "POST",
+        url: "https://creator.example.test/publish",
+      },
+    ]);
 
     await expect(session.page.isTextVisible("发布成功")).resolves.toBe(true);
 

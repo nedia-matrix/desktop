@@ -7,7 +7,7 @@ import {
   parseStoredPublications,
   removeStoredPublication,
   toPublicationSummary,
-} from "../src/main/publishing/publication-store.js";
+} from "../src/main/publishing/infrastructure/electron-publication-repository.js";
 
 const record: PublicationRecord = {
   requestId: "request-1",
@@ -37,6 +37,8 @@ const record: PublicationRecord = {
   contentForm: "imageText",
   tags: [],
   submissionMode: "manual_confirmation",
+  submissionEvidence: "none",
+  lastObservationSequence: 0,
   retained: false,
   assets: [
     {
@@ -85,8 +87,8 @@ describe("publication store mapping", () => {
   });
 
   it("refuses to rewrite a store created by a newer schema", () => {
-    expect(() => assertSupportedPublicationStoreVersion(5)).toThrow(
-      "Unsupported publication store schema version: 5",
+    expect(() => assertSupportedPublicationStoreVersion(6)).toThrow(
+      "Unsupported publication store schema version: 6",
     );
   });
 

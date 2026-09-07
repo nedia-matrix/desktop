@@ -5,7 +5,7 @@ import { kuaishouPlatformModule } from "../src/index.js";
 describe("Kuaishou platform module", () => {
   it("declares account detection and the supported publishing workflows", () => {
     expect(kuaishouPlatformModule).toMatchObject({
-      rulesVersion: "1.2.1-work-id-priority",
+      rulesVersion: "1.3.0-title-body-constraints",
       accounts: { implementationStatus: "live-tested" },
     });
     expect(kuaishouPlatformModule.accounts.detection.probes).toEqual(
@@ -51,7 +51,13 @@ describe("Kuaishou platform module", () => {
     expect(kuaishouPlatformModule.publishing?.createResultMonitor).toBeTypeOf(
       "function",
     );
-    const submitSteps = [{ kind: "click", targetId: "publish.submit" }];
+    const submitSteps = [
+      {
+        kind: "click",
+        targetId: "publish.submit",
+        commitBoundary: "submission",
+      },
+    ];
     expect(
       kuaishouPlatformModule.publishing?.forms.video?.automation.submit.steps,
     ).toEqual(submitSteps);

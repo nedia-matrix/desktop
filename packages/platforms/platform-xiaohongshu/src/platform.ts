@@ -89,9 +89,7 @@ const publishPage = defineAutomationPage({
       conditions: ["attached", "enabled"],
     },
     "publish.media.imagePreview": {
-      candidates: [
-        { kind: "css", selector: ".img-preview-area .pr" },
-      ],
+      candidates: [{ kind: "css", selector: ".img-preview-area .pr" }],
       expectedCount: "one-or-more",
       conditions: ["attached", "visible"],
     },
@@ -243,6 +241,7 @@ const submit = defineWorkflow({
     {
       kind: "click-position",
       targetId: "publish.submit",
+      commitBoundary: "submission",
       xRatio: 0.65,
       yRatio: 0.5,
     },
@@ -285,33 +284,13 @@ const sessionDetection = defineSessionDetectionPlan({
         },
       ],
     },
-    {
-      identityScheme: "xiaohongshu.user_id",
-      source: {
-        kind: "request",
-        url: "https://creator.xiaohongshu.com/api/galaxy/user/info",
-      },
-      fields: {
-        externalAccountId: ["data", "userId"],
-        nickname: ["data", "userName"],
-        avatarUrl: ["data", "userAvatar"],
-      },
-    },
   ],
-  domFallback: {
-    identityScheme: "xiaohongshu.user_id",
-    page: homePage,
-    loggedOutTargetId: "session.loggedOut",
-    nicknameTargetId: "session.nickname",
-    accountIdTargetId: "session.accountId",
-    accountIdAttributes: ["data-user-id", "data-userid"],
-  },
 });
 
 export const xiaohongshuPlatformModule = definePlatformModule({
   id: "xiaohongshu",
   displayName: "小红书",
-  rulesVersion: "1.0.0-capabilities",
+  rulesVersion: "1.2.0-publish-constraints",
   browser: {
     startUrl: "https://creator.xiaohongshu.com/new/home",
     allowedHostSuffixes: ["xiaohongshu.com"],
@@ -332,13 +311,21 @@ export const xiaohongshuPlatformModule = definePlatformModule({
     implementationStatus: "live-tested",
     forms: {
       video: {
-        constraints: {},
+        constraints: {
+          titleMaxLength: 20,
+          bodyMaxLength: 1_000,
+          mediaMaxCount: 1,
+        },
         tagPolicy: { placement: "new-lines" },
         submissionModes: ["automatic", "manual_confirmation"],
         automation: { prepare: prepareVideo, submit },
       },
       imageText: {
-        constraints: {},
+        constraints: {
+          titleMaxLength: 20,
+          bodyMaxLength: 1_000,
+          mediaMaxCount: 18,
+        },
         tagPolicy: { placement: "new-lines" },
         submissionModes: ["automatic", "manual_confirmation"],
         automation: { prepare: prepareImageText, submit },

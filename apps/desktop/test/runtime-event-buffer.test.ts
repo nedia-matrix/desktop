@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { RuntimeEventBuffer } from "../src/main/local-runtime/runtime-event-buffer.js";
+import { RuntimeEventBuffer } from "../src/main/runtime-api/events/runtime-event-buffer.js";
 
 describe("RuntimeEventBuffer", () => {
   it("resumes after a cursor and reports when older events were evicted", async () => {

@@ -1,9 +1,11 @@
 import type {
   PlatformAccountSummary,
+  PlatformSummary,
   PublishContentForm,
   PublishResultUpdate,
   SubmissionMode,
 } from "@nedia-matrix/ipc-contracts";
+import { preparePublishText } from "@nedia-matrix/platform-core";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
 import type { AppContext } from "../app-context.js";
@@ -26,8 +28,9 @@ export function PublishPage({ context }: { context: AppContext }) {
   const [accountId, setAccountId] = useState(context.accounts[0]?.id ?? "");
   const [contentForm, setContentForm] =
     useState<PublishContentForm>("imageText");
-  const [submissionMode, setSubmissionMode] =
-    useState<SubmissionMode>("automatic");
+  const [submissionMode, setSubmissionMode] = useState<SubmissionMode>(
+    "manual_confirmation",
+  );
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [tags, setTags] = useState("");
@@ -49,6 +52,36 @@ export function PublishPage({ context }: { context: AppContext }) {
       ),
     [platform],
   );
+  const requestedTags = useMemo(() => parseTags(tags), [tags]);
+  const preparedBody = capability
+    ? preparePublishText(
+        {
+          tagPolicy: capability.tagPolicy
+            ? { ...capability.tagPolicy, maxCount: undefined }
+            : undefined,
+        },
+        body.trim(),
+        requestedTags,
+      ).body
+    : body.trim();
+  const titleFeedback = textConstraintFeedback(
+    capability,
+    "title",
+    title.trim(),
+  );
+  const bodyFeedback = textConstraintFeedback(capability, "body", preparedBody);
+  const tagLimitExceeded =
+    capability?.tagPolicy?.maxCount !== undefined &&
+    requestedTags.length > capability.tagPolicy.maxCount;
+  const mediaLimitExceeded =
+    mediaSelection !== undefined &&
+    capability?.constraints.mediaMaxCount !== undefined &&
+    mediaSelection.files.length > capability.constraints.mediaMaxCount;
+  const hasHardConstraintViolation =
+    titleFeedback.exceeded ||
+    bodyFeedback.exceeded ||
+    tagLimitExceeded ||
+    mediaLimitExceeded;
 
   useEffect(() => {
     let active = true;
@@ -164,10 +197,7 @@ export function PublishPage({ context }: { context: AppContext }) {
         mediaSelectionId: mediaSelection.id,
         title,
         body,
-        tags: tags
-          .split(/[,，\n]+/)
-          .map((tag) => tag.trim())
-          .filter(Boolean),
+        tags: requestedTags,
         submissionMode,
       });
       if (result.status === "ready_for_review") {
@@ -256,7 +286,7 @@ export function PublishPage({ context }: { context: AppContext }) {
         <div class="editor-fields">
           <label class="field-label" for="draft-title-input">
             标题
-            <span>{title.length}/200</span>
+            <span>{titleFeedback.label}</span>
           </label>
           <input
             id="draft-title-input"
@@ -268,7 +298,7 @@ export function PublishPage({ context }: { context: AppContext }) {
 
           <label class="field-label" for="draft-body">
             正文
-            <span>{body.length}/20000</span>
+            <span>{bodyFeedback.label}</span>
           </label>
           <textarea
             id="draft-body"
@@ -292,6 +322,9 @@ export function PublishPage({ context }: { context: AppContext }) {
             value={tags}
             onInput={(event) => setTags(event.currentTarget.value)}
           />
+          {tagLimitExceeded ? (
+            <small>{`标签最多 ${capability?.tagPolicy?.maxCount} 个`}</small>
+          ) : null}
         </div>
       </section>
 
@@ -406,7 +439,7 @@ export function PublishPage({ context }: { context: AppContext }) {
           <button
             class="primary-action"
             type="submit"
-            disabled={submissionInFlight}
+            disabled={submissionInFlight || hasHardConstraintViolation}
           >
             <Icon name="publish" size={17} />
             {submissionInFlight ? "正在准备…" : "开始发布"}
@@ -443,6 +476,11 @@ function renderPublishResult(
     );
   } else if (update.status === "verifying") {
     context.setStatus(update.message ?? "平台已受理，正在确认作品…", "busy");
+  } else if (update.status === "submission_attempted") {
+    context.setStatus(
+      update.message ?? "已尝试提交，正在等待平台结果…",
+      "busy",
+    );
   } else if (update.status === "published") {
     const identity = update.platformContentId
       ? `，作品 ID：${update.platformContentId}`
@@ -450,6 +488,8 @@ function renderPublishResult(
     context.setStatus(`发布成功${identity}`);
   } else if (update.status === "failed") {
     context.setStatus(`发布失败：${update.message ?? "平台返回失败"}`, "error");
+  } else if (update.status === "cancelled") {
+    context.setStatus(update.message ?? "发布已取消");
   } else {
     context.setStatus(
       update.message ?? "发布结果暂时无法确认，请勿直接重复发布",
@@ -460,4 +500,30 @@ function renderPublishResult(
 
 function formatFileSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+type PublishCapability = PlatformSummary["publishCapabilities"][number];
+type TextConstraintKey = "title" | "body";
+
+function textConstraintFeedback(
+  capability: PublishCapability | undefined,
+  key: TextConstraintKey,
+  value: string,
+): { label: string; exceeded: boolean } {
+  const maximum =
+    key === "title"
+      ? capability?.constraints.titleMaxLength
+      : capability?.constraints.bodyMaxLength;
+  const effectiveMaximum = maximum ?? (key === "title" ? 200 : 20_000);
+  return {
+    label: `${value.length}/${effectiveMaximum}`,
+    exceeded: maximum !== undefined && value.length > maximum,
+  };
+}
+
+function parseTags(value: string): string[] {
+  return value
+    .split(/[,，\n]+/)
+    .map((tag) => tag.trim())
+    .filter(Boolean);
 }

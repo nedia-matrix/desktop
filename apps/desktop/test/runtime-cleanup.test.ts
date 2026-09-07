@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cleanupClosedBrowserSession,
   removeAccountAndResources,
+} from "../src/main/accounts/application/account-resource-cleanup.js";
+import {
   shutdownDesktopRuntime,
   waitForShutdown,
-} from "../src/main/runtime-cleanup.js";
+} from "../src/main/bootstrap/runtime-cleanup.js";
 
 const account = {
   id: "account-1",
@@ -69,9 +71,9 @@ describe("desktop runtime cleanup", () => {
   it("reports a completed shutdown without leaving a timeout behind", async () => {
     vi.useFakeTimers();
     try {
-      await expect(
-        waitForShutdown(Promise.resolve(), 5_000),
-      ).resolves.toBe("completed");
+      await expect(waitForShutdown(Promise.resolve(), 5_000)).resolves.toBe(
+        "completed",
+      );
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();

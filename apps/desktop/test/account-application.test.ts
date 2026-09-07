@@ -1,8 +1,8 @@
 import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AccountApplication } from "../src/main/accounts/account-application.js";
-import { PlatformAccountStore } from "../src/main/accounts/account-store.js";
+import { AccountService } from "../src/main/accounts/application/account-service.js";
+import { ElectronAccountRepository } from "../src/main/accounts/infrastructure/electron-account-repository.js";
 
 const account: PlatformAccountSummary = {
   id: "account-1",
@@ -27,7 +27,7 @@ describe("account application", () => {
   it("notifies after account creation and completed removal", async () => {
     const accounts = new Map<string, PlatformAccountSummary>();
     let changes = 0;
-    const application = new AccountApplication({
+    const application = new AccountService({
       accountStore: memoryAccountStore(accounts),
       browserSessions: {
         openForLogin: async () => openedSession(),
@@ -70,7 +70,7 @@ describe("account application", () => {
         accountInfo: [{ key: "follower_count", value: 12800 }],
         source: "api",
       });
-    const application = new AccountApplication({
+    const application = new AccountService({
       accountStore: memoryAccountStore(accounts),
       browserSessions: {
         openForLogin,
@@ -105,6 +105,68 @@ describe("account application", () => {
     expect(updates).toHaveLength(1);
   });
 
+  it("recognizes an observed-response login from an event and disposes its listener", async () => {
+    const kuaishouAccount: PlatformAccountSummary = {
+      ...account,
+      platformId: "kuaishou",
+      profileId: "matrix-kuaishou-account-1",
+      displayName: "快手账号",
+    };
+    const accounts = new Map([[kuaishouAccount.id, kuaishouAccount]]);
+    let notifyResponse = () => undefined;
+    const dispose = vi.fn();
+    const sessionDetector = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: "unknown",
+        reason: "无法识别当前登录账号",
+      })
+      .mockResolvedValueOnce({
+        status: "authenticated",
+        identityScheme: "kuaishou.user_id",
+        externalAccountId: "kuaishou-42",
+        nickname: "快手账号",
+        avatarUrl: null,
+        accountInfo: [],
+        source: "response",
+      });
+    const opened = {
+      ...openedSession(kuaishouAccount.profileId),
+      sessionProbeClient: {
+        subscribeObservedResponses(listener: () => void) {
+          notifyResponse = listener;
+          return () => undefined;
+        },
+        dispose,
+      },
+    } as never;
+    const application = new AccountService({
+      accountStore: memoryAccountStore(accounts),
+      browserSessions: {
+        openForLogin: async () => opened,
+        openForAutomation: async () => opened,
+        closeAutomation: async () => undefined,
+        removeProfile: async () => undefined,
+      },
+      removeAccountResources: async () => undefined,
+      sessionDetector,
+      recognitionIntervalMs: 10,
+      recognitionMaxAttempts: 2,
+    });
+
+    await application.openAccount({ accountId: kuaishouAccount.id });
+    notifyResponse();
+
+    await vi.waitFor(() => {
+      expect(accounts.get(kuaishouAccount.id)).toMatchObject({
+        status: "authenticated",
+        externalAccountId: "kuaishou-42",
+      });
+    });
+    expect(sessionDetector).toHaveBeenCalledTimes(2);
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
   it("preserves a stable account identity when automatic recognition detects a switched account", async () => {
     const storedAccount: PlatformAccountSummary = {
       ...account,
@@ -117,7 +179,7 @@ describe("account application", () => {
     };
     const accounts = new Map([[storedAccount.id, storedAccount]]);
     const updates: number[] = [];
-    const application = new AccountApplication({
+    const application = new AccountService({
       accountStore: memoryAccountStore(accounts),
       browserSessions: {
         openForLogin: async () => openedSession(),
@@ -165,7 +227,7 @@ describe("account application", () => {
       status: "unknown",
     };
     const accounts = new Map([[storedAccount.id, storedAccount]]);
-    const application = new AccountApplication({
+    const application = new AccountService({
       accountStore: memoryAccountStore(accounts),
       browserSessions: {
         openForLogin: async () => openedSession(),
@@ -214,8 +276,54 @@ describe("account application", () => {
     });
   });
 
+  it("does not downgrade an authenticated account after an inconclusive verification", async () => {
+    const storedAccount: PlatformAccountSummary = {
+      ...account,
+      lifecycle: "active",
+      identityScheme: "douyin.short_id",
+      externalAccountId: "douyin-1",
+      nickname: "原账号",
+      displayName: "原账号",
+      status: "authenticated",
+    };
+    const accounts = new Map([[storedAccount.id, storedAccount]]);
+    const updates: number[] = [];
+    const closeVerification = vi.fn(async () => undefined);
+    const application = new AccountService({
+      accountStore: memoryAccountStore(accounts),
+      browserSessions: {
+        openForLogin: async () => openedSession(),
+        openForAutomation: async () => openedSession(),
+        openForVerification: async () =>
+          ({
+            driver: {},
+            sessionProbeClient: {},
+            close: closeVerification,
+          }) as never,
+        closeAutomation: async () => undefined,
+        removeProfile: async () => undefined,
+      },
+      removeAccountResources: async () => undefined,
+      sessionDetector: async () => ({
+        status: "unknown",
+        reason: "无法识别当前登录账号",
+      }),
+      onAccountsChanged: () => updates.push(1),
+    });
+
+    await expect(
+      application.verifyAccount({ accountId: storedAccount.id }),
+    ).resolves.toEqual({
+      status: "unknown",
+      reason: "无法识别当前登录账号",
+    });
+    expect(accounts.get(storedAccount.id)?.status).toBe("authenticated");
+    expect(updates).toEqual([]);
+    expect(closeVerification).toHaveBeenCalledOnce();
+  });
+
   it("keeps the existing account id and adopts a duplicate candidate profile", async () => {
-    const store = new PlatformAccountStore(accountPersistence());
+    const store = new ElectronAccountRepository(accountPersistence());
     const survivingAccount: PlatformAccountSummary = {
       ...account,
       id: "surviving-account",
@@ -232,7 +340,7 @@ describe("account application", () => {
     const removeProfile = vi.fn(async () => undefined);
     const updates: number[] = [];
     let now = new Date("2026-08-26T00:00:00.000Z");
-    const application = new AccountApplication({
+    const application = new AccountService({
       accountStore: store,
       browserSessions: {
         openForLogin: async (stored) => openedSession(stored.profileId),
@@ -294,7 +402,7 @@ describe("account application", () => {
   });
 
   it("does not replace the profile while the existing account is publishing", async () => {
-    const store = new PlatformAccountStore(accountPersistence());
+    const store = new ElectronAccountRepository(accountPersistence());
     store.put({
       ...account,
       id: "surviving-account",
@@ -305,7 +413,7 @@ describe("account application", () => {
       status: "authenticated",
     });
     const closeAutomation = vi.fn(async () => undefined);
-    const application = new AccountApplication({
+    const application = new AccountService({
       accountStore: store,
       browserSessions: {
         openForLogin: async (stored) => openedSession(stored.profileId),

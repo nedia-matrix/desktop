@@ -2,6 +2,7 @@ import type {
   AutomationDriver,
   AutomationPage,
   AutomationWorkflow,
+  WorkflowExecutionHooks,
   WorkflowInputs,
   WorkflowStep,
 } from "@nedia-matrix/automation-contracts";
@@ -76,23 +77,48 @@ async function executeStep(
   step: WorkflowStep,
   driver: AutomationDriver,
   inputs: WorkflowInputs,
+  hooks: WorkflowExecutionHooks,
+  stepIndex: number,
+  workflowId: string,
 ): Promise<void> {
   switch (step.kind) {
-    case "click":
-      await driver.click(await resolveTarget(driver, page, step.targetId));
+    case "click": {
+      const target = await resolveTarget(driver, page, step.targetId);
+      if (step.commitBoundary) {
+        await hooks.beforeCommit?.({
+          workflowId,
+          stepIndex,
+          boundary: step.commitBoundary,
+        });
+      }
+      await driver.click(target);
       return;
-    case "click-position":
-      await driver.clickAtPosition(
-        await resolveTarget(driver, page, step.targetId),
-        step.xRatio,
-        step.yRatio,
-      );
+    }
+    case "click-position": {
+      const target = await resolveTarget(driver, page, step.targetId);
+      if (step.commitBoundary) {
+        await hooks.beforeCommit?.({
+          workflowId,
+          stepIndex,
+          boundary: step.commitBoundary,
+        });
+      }
+      await driver.clickAtPosition(target, step.xRatio, step.yRatio);
       return;
+    }
     case "click-if-present": {
       const deadline = Date.now() + step.timeoutMs;
       do {
         try {
-          await driver.click(await resolveTarget(driver, page, step.targetId));
+          const target = await resolveTarget(driver, page, step.targetId);
+          if (step.commitBoundary) {
+            await hooks.beforeCommit?.({
+              workflowId,
+              stepIndex,
+              boundary: step.commitBoundary,
+            });
+          }
+          await driver.click(target);
           return;
         } catch (error) {
           if (
@@ -252,6 +278,7 @@ export async function executeWorkflow(
   workflow: AutomationWorkflow,
   driver: AutomationDriver,
   inputs: WorkflowInputs,
+  hooks: WorkflowExecutionHooks = {},
 ): Promise<void> {
   let activeAction: ActiveAction | undefined;
   try {
@@ -262,7 +289,15 @@ export async function executeWorkflow(
     }
     for (const [index, step] of workflow.steps.entries()) {
       activeAction = activeActionFor(index, step);
-      await executeStep(workflow.page, step, driver, inputs);
+      await executeStep(
+        workflow.page,
+        step,
+        driver,
+        inputs,
+        hooks,
+        index,
+        workflow.id,
+      );
     }
   } catch (error) {
     const failure = await createWorkflowFailure(

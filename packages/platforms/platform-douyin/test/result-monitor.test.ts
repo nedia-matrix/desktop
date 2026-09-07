@@ -117,6 +117,7 @@ describe("Douyin result monitor", () => {
     monitor.subscribe((event) => events.push(event));
     await monitor.ready();
     monitor.arm();
+    monitor.submissionAttempted();
     fake.respond({ status_code: 0 });
     await flush();
     fake.respond({
@@ -154,6 +155,7 @@ describe("Douyin result monitor", () => {
     const fake = fakeSession();
     const monitor = createDouyinPublishResultMonitor({
       contentForm: "video",
+      submissionMode: "automatic",
       session: fake.session,
       clock,
       diagnostics: diagnostics(),
@@ -162,6 +164,7 @@ describe("Douyin result monitor", () => {
     monitor.subscribe((event) => events.push(event));
     await monitor.ready();
     monitor.arm();
+    monitor.submissionAttempted();
     fake.respond({ status_code: 0 });
     await vi.advanceTimersByTimeAsync(100_000);
     expect(events.map((event) => event.kind)).toEqual([
@@ -172,6 +175,7 @@ describe("Douyin result monitor", () => {
     const closing = fakeSession();
     const closingMonitor = createDouyinPublishResultMonitor({
       contentForm: "video",
+      submissionMode: "manual_confirmation",
       session: closing.session,
       clock,
       diagnostics: diagnostics(),
@@ -183,7 +187,31 @@ describe("Douyin result monitor", () => {
     closing.respond({ status_code: 0 });
     await vi.advanceTimersByTimeAsync(0);
     closing.close();
+    await vi.advanceTimersByTimeAsync(0);
     expect(closingEvents.at(-1)?.kind).toBe("uncertain");
+  });
+
+  it("does not time out a manual confirmation observation", async () => {
+    vi.useFakeTimers();
+    const fake = fakeSession();
+    const monitor = createDouyinPublishResultMonitor({
+      contentForm: "video",
+      submissionMode: "manual_confirmation",
+      session: fake.session,
+      clock,
+      diagnostics: diagnostics(),
+    });
+    const events: PublishResultEvent[] = [];
+    monitor.subscribe((event) => events.push(event));
+    await monitor.ready();
+    monitor.arm();
+    monitor.submissionAttempted();
+    fake.respond({ status_code: 0 });
+
+    await vi.advanceTimersByTimeAsync(200_000);
+
+    expect(events.map((event) => event.kind)).toEqual(["verifying"]);
+    monitor.stop();
   });
 
   it("reports response read failures without exposing raw data", async () => {
@@ -207,5 +235,37 @@ describe("Douyin result monitor", () => {
       message: "无法读取抖音发布响应，将继续等待明确的发布结果",
     });
     monitor.stop();
+  });
+
+  it("settles an arrived publish response before classifying page close", async () => {
+    const fake = fakeSession();
+    const monitor = createDouyinPublishResultMonitor({
+      contentForm: "video",
+      submissionMode: "manual_confirmation",
+      session: fake.session,
+      clock,
+      diagnostics: diagnostics(),
+    });
+    const events: PublishResultEvent[] = [];
+    let resolveBody = (_value: string): void => undefined;
+    const body = new Promise<string>((resolve) => {
+      resolveBody = resolve;
+    });
+    monitor.subscribe((event) => events.push(event));
+    await monitor.ready();
+    monitor.arm();
+
+    fake.respondWithText(body);
+    fake.close();
+    resolveBody(
+      JSON.stringify({ status_code: 0, item_id: "7523333333333333333" }),
+    );
+    await flush();
+
+    expect(events.at(-1)).toMatchObject({
+      kind: "published",
+      contentId: "7523333333333333333",
+    });
+    expect(events.some((event) => event.kind === "uncertain")).toBe(false);
   });
 });

@@ -50,21 +50,26 @@ function classifyPublishRefresh(body: unknown): PublishRefreshClassification {
 
   const workId = normalizedWorkId(first.workId);
   if (workId) return { kind: "published", workId };
-  if (first.publishStatus === 2) return { kind: "waiting" };
-  if (first.publishStatus !== 4) {
-    return {
-      kind: "uncertain",
-      message: `快手返回未知发布状态：${String(first.publishStatus)}`,
-    };
+  switch (first.publishStatus) {
+    case 10:
+    case 2:
+      return { kind: "waiting" };
+    case 4:
+      return {
+        kind: "uncertain",
+        message: "快手返回发布成功状态，但没有有效作品 ID",
+      };
+    default:
+      return {
+        kind: "uncertain",
+        message: `快手返回未知发布状态：${String(first.publishStatus)}`,
+      };
   }
-
-  return {
-    kind: "uncertain",
-    message: "快手返回发布成功状态，但没有有效作品 ID",
-  };
 }
 
-function isPublishRefreshResponse(response: ObservedHttpResponse): boolean {
+function isPublishRefreshResponse(
+  response: Pick<ObservedHttpResponse, "method" | "url">,
+): boolean {
   return (
     response.method.toUpperCase() === "POST" &&
     new RegExp(
@@ -84,6 +89,8 @@ export function createKuaishouPublishResultMonitor(
   const listeners = new Set<(event: PublishResultEvent) => void>();
   let responseQueue = Promise.resolve();
   let verificationRun = 0;
+  let submissionObserved = false;
+  let interrupting: Promise<void> | undefined;
 
   const emit = (event: PublishResultEvent): void => {
     for (const listener of listeners) listener(event);
@@ -91,8 +98,22 @@ export function createKuaishouPublishResultMonitor(
   const stop = (): void => {
     if (!lifecycle.complete()) return;
     verificationRun += 1;
+    unsubscribeRequests();
     unsubscribeResponses();
     unsubscribeClose();
+  };
+  const observeSubmissionRequest = (): void => {
+    if (
+      submissionObserved ||
+      (lifecycle.state !== "armed" && lifecycle.state !== "verifying")
+    )
+      return;
+    submissionObserved = true;
+    emit({
+      kind: "submission_attempted",
+      source: "page_request",
+      message: "已观察到快手发布请求",
+    });
   };
   const finish = (event: PublishResultEvent): void => {
     if (lifecycle.state === "completed") return;
@@ -106,7 +127,9 @@ export function createKuaishouPublishResultMonitor(
       kind: "verifying",
       message: "快手页面已提交，正在等待发布结果",
     });
-    void waitForVerification(++verificationRun);
+    if (context.submissionMode === "automatic") {
+      void waitForVerification(++verificationRun);
+    }
   };
 
   async function inspectResponse(
@@ -176,15 +199,33 @@ export function createKuaishouPublishResultMonitor(
         }
       });
   });
+  const unsubscribeRequests =
+    session.requests?.subscribe((request) => {
+      if (isPublishRefreshResponse(request)) observeSubmissionRequest();
+    }) ?? (() => undefined);
+  const interrupt = (
+    reason: "page_closed" | "observation_interrupted" | "desktop_shutdown",
+  ) => {
+    interrupting ??= (async () => {
+      unsubscribeRequests();
+      unsubscribeResponses();
+      unsubscribeClose();
+      verificationRun += 1;
+      await responseQueue;
+      if (lifecycle.state === "completed") return;
+      finish(
+        submissionObserved || lifecycle.state === "verifying"
+          ? {
+              kind: "uncertain",
+              message: `${reason === "page_closed" ? "快手发布窗口已关闭" : "快手发布观察已中断"}，请先在平台核实结果`,
+            }
+          : { kind: "cancelled", message: "未观察到提交尝试，发布已取消" },
+      );
+    })();
+    return interrupting;
+  };
   const unsubscribeClose = session.page.subscribeClose(() => {
-    if (lifecycle.state === "armed" || lifecycle.state === "verifying") {
-      finish({
-        kind: "uncertain",
-        message: "快手发布窗口已关闭，请先在平台核实结果",
-      });
-    } else {
-      stop();
-    }
+    void interrupt("page_closed");
   });
 
   return {
@@ -194,9 +235,13 @@ export function createKuaishouPublishResultMonitor(
     },
     async ready() {},
     arm() {
-      if (!lifecycle.arm()) return;
+      lifecycle.arm();
+    },
+    submissionAttempted() {
+      submissionObserved = true;
       if (context.submissionMode === "automatic") beginVerification();
     },
+    interrupt,
     stop,
   };
 }

@@ -4,11 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ContentAddressedPublicationAssetStore } from "../src/main/publishing/publication-asset-store.js";
+import { ContentAddressedPublicationAssetStore } from "../src/main/publishing/infrastructure/content-addressed-asset-store.js";
 import {
   RemoteAssetDownloader,
   type RemotePublicationAsset,
-} from "../src/main/publishing/remote-asset-downloader.js";
+} from "../src/main/publishing/infrastructure/remote-asset-downloader.js";
 
 const temporaryRoots: string[] = [];
 const png = Buffer.from([

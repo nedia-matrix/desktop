@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { StartPublicationInput } from "@nedia-matrix/application-publishing";
 import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
 
-import { NediaMatrixApplication } from "../src/main/application/nedia-matrix-application.js";
-import { AccountPublicationLock } from "../src/main/publishing/account-publication-lock.js";
-import { MediaSelectionUnavailableError } from "../src/main/publishing/media-selection-store.js";
+import { DesktopApplication } from "../src/main/application/desktop-application.js";
+import { AccountPublicationLock } from "../src/main/publishing/application/account-publication-lock.js";
+import { MediaSelectionUnavailableError } from "../src/main/publishing/infrastructure/media-selection-store.js";
 
 function createDependencies() {
   const accounts = new Map<string, PlatformAccountSummary>();
@@ -17,11 +17,29 @@ function createDependencies() {
       accountPublications: new AccountPublicationLock(),
       accountStore: {
         list: () => [...accounts.values()],
+        get: (accountId: string) => accounts.get(accountId),
         require: (accountId: string) => {
           const account = accounts.get(accountId);
           if (!account) throw new TypeError("Platform account does not exist");
           return account;
         },
+        resolve: (accountId: string) => {
+          const account = accounts.get(accountId);
+          if (!account) throw new TypeError("Platform account does not exist");
+          return { account };
+        },
+        findActiveByIdentity: (identity: {
+          platformId: string;
+          identityScheme: string;
+          externalAccountId: string;
+        }) =>
+          [...accounts.values()].filter(
+            (account) =>
+              account.lifecycle === "active" &&
+              account.platformId === identity.platformId &&
+              account.identityScheme === identity.identityScheme &&
+              account.externalAccountId === identity.externalAccountId,
+          ),
         put: (account: PlatformAccountSummary) =>
           accounts.set(account.id, account),
         remove: (accountId: string) => {
@@ -203,14 +221,19 @@ function createPublishFixture(options?: {
       consume: () => actions.push("consume"),
     },
     publishObservations: {
-      stop: () => undefined,
+      stop: async () => undefined,
       attach: (input: { onFinished?: () => void }) => {
         finishObservation = input.onFinished ?? (() => undefined);
         return {
           id: "observation-1",
           ready: async () => actions.push("ready"),
           arm: () => actions.push("arm"),
-          stop: () => {
+          beginSubmissionAttempt: async () => actions.push("attempt"),
+          interrupt: async () => {
+            actions.push("stop");
+            finishObservation();
+          },
+          stopSilently: async () => {
             actions.push("stop");
             finishObservation();
           },
@@ -291,8 +314,14 @@ function createPublishFixture(options?: {
       workflow: { id: string },
       _driver: unknown,
       inputs: Readonly<Record<string, unknown>>,
+      hooks?: {
+        beforeCommit?: (input: { boundary: "submission" }) => Promise<void>;
+      },
     ) => {
       const workflowId = workflow.id;
+      if (workflowId === "publish.submit") {
+        await hooks?.beforeCommit?.({ boundary: "submission" });
+      }
       actions.push(`workflow:${workflowId}`);
       if (workflowId.startsWith("publish.prepare")) {
         prepareWorkflowInputs = inputs;
@@ -313,10 +342,10 @@ function createPublishFixture(options?: {
   };
 }
 
-describe("NediaMatrixApplication", () => {
+describe("DesktopApplication", () => {
   it("creates an isolated account through a transport-independent use case", () => {
     const { dependencies } = createDependencies();
-    const application = new NediaMatrixApplication(dependencies);
+    const application = new DesktopApplication(dependencies);
 
     const account = application.accounts.create({ platformId: "douyin" });
 
@@ -332,7 +361,7 @@ describe("NediaMatrixApplication", () => {
 
   it("validates account creation before mutating the store", () => {
     const { accounts, dependencies } = createDependencies();
-    const application = new NediaMatrixApplication(dependencies);
+    const application = new DesktopApplication(dependencies);
 
     expect(() => application.accounts.create({ platformId: "" })).toThrow(
       "Invalid platform request",
@@ -342,7 +371,7 @@ describe("NediaMatrixApplication", () => {
 
   it("persists submitting and arms observation before automatic submit", async () => {
     const { actions, dependencies } = createPublishFixture();
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     const result = await application.publications.prepare({
       accountId: "account-1",
@@ -350,6 +379,7 @@ describe("NediaMatrixApplication", () => {
       mediaSelectionId: "selection-1",
       title: "标题",
       body: "正文",
+      submissionMode: "automatic",
     });
 
     expect(result.status).toBe("submission_started");
@@ -358,16 +388,17 @@ describe("NediaMatrixApplication", () => {
       "ready",
       "workflow:publish.prepare.imageText",
       "consume",
-      "focus",
-      "mark:submitting",
       "arm",
+      "mark:submitting",
+      "focus",
+      "attempt",
       "workflow:publish.submit",
     ]);
   });
 
   it("keeps manual confirmation before the submit workflow", async () => {
     const { actions, dependencies } = createPublishFixture();
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     const result = await application.publications.prepare({
       accountId: "account-1",
@@ -384,16 +415,16 @@ describe("NediaMatrixApplication", () => {
       "ready",
       "workflow:publish.prepare.imageText",
       "consume",
-      "focus",
-      "mark:awaiting_confirmation",
       "arm",
+      "mark:awaiting_confirmation",
+      "focus",
     ]);
   });
 
   it("composes Kuaishou title, body, and tags into a manual-review description", async () => {
     const { actions, dependencies, prepareWorkflowInputs } =
       createPublishFixture({ platformId: "kuaishou", contentForm: "video" });
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     const result = await application.publications.prepare({
       accountId: "account-1",
@@ -417,7 +448,7 @@ describe("NediaMatrixApplication", () => {
       platformId: "kuaishou",
       contentForm: "video",
     });
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     await expect(
       application.publications.prepare({
@@ -434,9 +465,10 @@ describe("NediaMatrixApplication", () => {
       "ready",
       "workflow:publish.prepare.video",
       "consume",
-      "focus",
-      "mark:submitting",
       "arm",
+      "mark:submitting",
+      "focus",
+      "attempt",
       "workflow:publish.submit",
     ]);
   });
@@ -447,7 +479,7 @@ describe("NediaMatrixApplication", () => {
       contentForm: "video",
       mediaSelectionUnavailable: true,
     });
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     await expect(
       application.publications.prepare({
@@ -473,7 +505,7 @@ describe("NediaMatrixApplication", () => {
         platformId: "kuaishou",
         contentForm: "imageText",
       });
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     await expect(
       application.publications.prepare({
@@ -497,7 +529,7 @@ describe("NediaMatrixApplication", () => {
       platformId: "kuaishou",
       contentForm: "imageText",
     });
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     await expect(
       application.publications.prepare({
@@ -514,9 +546,10 @@ describe("NediaMatrixApplication", () => {
       "ready",
       "workflow:publish.prepare.imageText",
       "consume",
-      "focus",
-      "mark:submitting",
       "arm",
+      "mark:submitting",
+      "focus",
+      "attempt",
       "workflow:publish.submit",
     ]);
   });
@@ -524,7 +557,7 @@ describe("NediaMatrixApplication", () => {
   it("persists normalized tags and sends native topic inputs to the workflow", async () => {
     const { dependencies, preparationInput, prepareWorkflowInputs } =
       createPublishFixture();
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     await application.publications.prepare({
       accountId: "account-1",
@@ -532,6 +565,7 @@ describe("NediaMatrixApplication", () => {
       mediaSelectionId: "selection-1",
       title: "标题",
       body: "正文",
+      submissionMode: "automatic" as const,
       tags: [" #旅行 ", "旅行", "周末去哪儿"],
     });
 
@@ -543,13 +577,14 @@ describe("NediaMatrixApplication", () => {
 
   it("rejects a second publication while the same account is active", async () => {
     const { dependencies, finishObservation } = createPublishFixture();
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
     const request = {
       accountId: "account-1",
       contentForm: "imageText" as const,
       mediaSelectionId: "selection-1",
       title: "标题",
       body: "正文",
+      submissionMode: "automatic" as const,
     };
 
     await expect(
@@ -572,7 +607,7 @@ describe("NediaMatrixApplication", () => {
       createPublishFixture({
         detectedExternalAccountId: "external-2",
       });
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     await expect(
       application.publications.prepare({
@@ -582,6 +617,7 @@ describe("NediaMatrixApplication", () => {
         mediaSelectionId: "selection-1",
         title: "标题",
         body: "正文",
+        submissionMode: "automatic",
       }),
     ).resolves.toEqual({
       status: "account_unknown",
@@ -605,9 +641,7 @@ describe("NediaMatrixApplication", () => {
       accountInfo: [],
       source: "api" as const,
     });
-    const retriedApplication = new NediaMatrixApplication(
-      dependencies as never,
-    );
+    const retriedApplication = new DesktopApplication(dependencies as never);
     await expect(
       retriedApplication.publications.prepare({
         accountId: "account-1",
@@ -616,6 +650,7 @@ describe("NediaMatrixApplication", () => {
         mediaSelectionId: "selection-1",
         title: "标题",
         body: "正文",
+        submissionMode: "automatic",
       }),
     ).resolves.toMatchObject({ status: "submission_started" });
   });
@@ -631,7 +666,7 @@ describe("NediaMatrixApplication", () => {
       accountInfo: [{ key: "follower_count" as const, value: 25600 }],
       source: "api" as const,
     });
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     await application.publications.prepare({
       accountId: "account-1",
@@ -639,6 +674,7 @@ describe("NediaMatrixApplication", () => {
       mediaSelectionId: "selection-1",
       title: "标题",
       body: "正文",
+      submissionMode: "automatic",
     });
 
     expect(accounts.get("account-1")).toMatchObject({
@@ -654,7 +690,7 @@ describe("NediaMatrixApplication", () => {
 
   it("discards downloaded assets when the account is already publishing", async () => {
     const { actions, dependencies } = createPublishFixture();
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
     await application.publications.prepare({
       accountId: "account-1",
       requestId: "request-1",
@@ -695,7 +731,7 @@ describe("NediaMatrixApplication", () => {
     const { actions, dependencies } = createPublishFixture({
       failSubmit: true,
     });
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     const result = await application.publications.prepare({
       accountId: "account-1",
@@ -703,6 +739,7 @@ describe("NediaMatrixApplication", () => {
       mediaSelectionId: "selection-1",
       title: "标题",
       body: "正文",
+      submissionMode: "automatic",
     });
 
     expect(result).toMatchObject({
@@ -713,9 +750,9 @@ describe("NediaMatrixApplication", () => {
     expect(actions).not.toContain("mark:failed");
   });
 
-  it("downloads remote assets into the existing automatic publish workflow", async () => {
+  it("downloads remote assets into the human-confirmed publish workflow", async () => {
     const { actions, dependencies, preparationInput } = createPublishFixture();
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     const result = await application.publications.prepareRemote({
       accountId: "account-1",
@@ -734,13 +771,15 @@ describe("NediaMatrixApplication", () => {
       ],
     });
 
-    expect(result.status).toBe("submission_started");
-    expect(actions.slice(0, 5)).toEqual([
+    expect(result.status).toBe("ready_for_review");
+    expect(actions.slice(0, 7)).toEqual([
       "download",
       "create-selection",
       "start",
       "ready",
       "workflow:publish.prepare.imageText",
+      "consume",
+      "arm",
     ]);
     expect(actions).not.toContain("discard");
     expect(preparationInput()?.assets).toEqual([
@@ -757,7 +796,7 @@ describe("NediaMatrixApplication", () => {
       createPublishFixture({
         loginRequired: true,
       });
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     const result = await application.publications.prepareRemote({
       accountId: "account-1",
@@ -791,7 +830,7 @@ describe("NediaMatrixApplication", () => {
     const { actions, dependencies } = createPublishFixture({
       existingPublication: true,
     });
-    const application = new NediaMatrixApplication(dependencies as never);
+    const application = new DesktopApplication(dependencies as never);
 
     const result = await application.publications.prepareRemote({
       accountId: "account-1",

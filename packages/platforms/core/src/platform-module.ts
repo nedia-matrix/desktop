@@ -2,6 +2,7 @@ import type { SessionDetectionPlan } from "@nedia-matrix/automation-contracts";
 import { z } from "zod";
 
 import type { PlatformPublishFormCapability } from "./publishing.js";
+import { publishConstraintsSchema } from "./publishing.js";
 import type { PlatformPublishRuntime } from "./runtime.js";
 
 export const platformImplementationStatusSchema = z.enum([
@@ -140,6 +141,10 @@ export function definePlatformModule(module: PlatformModule): PlatformModule {
       throw new TypeError(
         "Publishing capability must define at least one form",
       );
+    }
+    for (const form of Object.values(module.publishing.forms)) {
+      if (!form) continue;
+      publishConstraintsSchema.parse(form.constraints);
     }
   }
 
