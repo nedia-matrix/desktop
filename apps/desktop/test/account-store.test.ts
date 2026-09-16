@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   AccountIdentityConflictError,
   parseStoredAccounts,
-  ElectronAccountRepository,
-} from "../src/main/accounts/infrastructure/electron-account-repository.js";
+  AccountStateRepository,
+} from "../src/main/accounts/infrastructure/account-state-repository.js";
 
 const account = {
   id: "account-1",
@@ -17,6 +17,7 @@ const account = {
   nickname: null,
   avatarUrl: null,
   accountInfo: [],
+  profileSyncedAt: null,
   status: "login_required",
   lastVerifiedAt: null,
   createdAt: "2026-08-06T00:00:00.000Z",
@@ -72,7 +73,7 @@ describe("platform account persistence", () => {
 
   it("atomically keeps the existing account while adopting the candidate profile", () => {
     const persistence = memoryPersistence();
-    const store = new ElectronAccountRepository(persistence);
+    const store = new AccountStateRepository(persistence);
     const survivingAccount = {
       ...account,
       id: "surviving-account",
@@ -136,7 +137,7 @@ describe("platform account persistence", () => {
   });
 
   it("rejects a second active record with the same canonical identity", () => {
-    const store = new ElectronAccountRepository(memoryPersistence());
+    const store = new AccountStateRepository(memoryPersistence());
     store.put({
       ...account,
       id: "first",

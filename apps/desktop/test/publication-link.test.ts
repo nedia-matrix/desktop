@@ -1,8 +1,9 @@
-import type { PublicationRecord } from "@nedia-matrix/application-publishing";
-import type { PlatformModule } from "@nedia-matrix/platform-core";
+import {
+  requireSafePublicationUrl,
+  type PublicationSnapshot,
+} from "@nedia-matrix/publishing";
+import type { PlatformModule } from "@nedia-matrix/platform-sdk";
 import { describe, expect, it } from "vitest";
-
-import { requireSafePublicationUrl } from "../src/main/publishing/application/publication-link.js";
 
 const platform = {
   browser: {
@@ -11,10 +12,10 @@ const platform = {
   },
 } as PlatformModule;
 
-function record(url: string): PublicationRecord {
+function record(url: string): PublicationSnapshot {
   return {
     publication: { platformContentUrl: url },
-  } as PublicationRecord;
+  } as PublicationSnapshot;
 }
 
 describe("publication links", () => {

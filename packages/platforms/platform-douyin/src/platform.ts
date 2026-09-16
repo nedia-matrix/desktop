@@ -3,9 +3,16 @@ import {
   defineSessionDetectionPlan,
   defineWorkflow,
 } from "@nedia-matrix/automation-engine";
-import { definePlatformModule } from "@nedia-matrix/platform-core";
+import {
+  definePlatformModule,
+  submissionModes,
+} from "@nedia-matrix/platform-sdk";
 
 import { createDouyinPublishResultMonitor } from "./result-monitor.js";
+import {
+  douyinAccountProfileCapability,
+  douyinContentCapability,
+} from "./data-reader.js";
 
 const homePage = defineAutomationPage({
   id: "home",
@@ -215,19 +222,6 @@ const sessionDetection = defineSessionDetectionPlan({
         nickname: ["user", "nickname"],
         avatarUrl: ["user", "avatar_thumb", "url_list", 0],
       },
-      accountInfo: [
-        { key: "desc", valuePath: ["user", "signature"], valueType: "string" },
-        {
-          key: "follower_count",
-          valuePath: ["user", "follower_count"],
-          valueType: "number",
-        },
-        {
-          key: "like_count",
-          valuePath: ["user", "total_favorited"],
-          valueType: "number",
-        },
-      ],
     },
   ],
   domFallback: {
@@ -245,6 +239,11 @@ export const douyinPlatformModule = definePlatformModule({
   displayName: "抖音",
   rulesVersion: "1.2.0-publish-constraints",
   browser: {
+    sessionCapabilities: {
+      isolatedPages: true,
+      parallelSync: true,
+      headlessSync: true,
+    },
     startUrl: "https://creator.douyin.com/creator-micro/home",
     allowedHostSuffixes: ["douyin.com"],
   },
@@ -260,6 +259,8 @@ export const douyinPlatformModule = definePlatformModule({
     ],
     detection: sessionDetection,
   },
+  accountProfile: douyinAccountProfileCapability,
+  content: douyinContentCapability,
   publishing: {
     implementationStatus: "live-tested",
     forms: {
@@ -270,7 +271,7 @@ export const douyinPlatformModule = definePlatformModule({
           mediaMaxCount: 1,
         },
         tagPolicy: { placement: "inline", maxCount: 5 },
-        submissionModes: ["automatic", "manual_confirmation"],
+        submissionModes,
         automation: { prepare: prepareVideo, submit },
       },
       imageText: {
@@ -280,7 +281,7 @@ export const douyinPlatformModule = definePlatformModule({
           mediaMaxCount: 35,
         },
         tagPolicy: { placement: "inline", maxCount: 5 },
-        submissionModes: ["automatic", "manual_confirmation"],
+        submissionModes,
         automation: { prepare: prepareImageText, submit },
       },
     },

@@ -1,11 +1,11 @@
+import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
+import type { PublishResultUpdate } from "@nedia-matrix/publishing";
 import type {
-  PlatformAccountSummary,
-  PlatformSummary,
-  PublishContentForm,
-  PublishResultUpdate,
   SubmissionMode,
-} from "@nedia-matrix/ipc-contracts";
-import { preparePublishText } from "@nedia-matrix/platform-core";
+  SupportedPublishContentForm as PublishContentForm,
+} from "@nedia-matrix/publishing";
+import { preparePublishText } from "@nedia-matrix/platform-sdk";
+import type { PlatformSummary } from "../../../bridge/contracts.js";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
 import type { AppContext } from "../app-context.js";
@@ -23,9 +23,19 @@ interface MediaSelection {
   files: readonly { name: string; size: number }[];
 }
 
-export function PublishPage({ context }: { context: AppContext }) {
+export function PublishPage({
+  context,
+  preferredAccountId,
+}: {
+  context: AppContext;
+  preferredAccountId?: string;
+}) {
   const [accounts, setAccounts] = useState(context.accounts);
-  const [accountId, setAccountId] = useState(context.accounts[0]?.id ?? "");
+  const [accountId, setAccountId] = useState(
+    context.accounts.some(({ id }) => id === preferredAccountId)
+      ? (preferredAccountId ?? "")
+      : (context.accounts[0]?.id ?? ""),
+  );
   const [contentForm, setContentForm] =
     useState<PublishContentForm>("imageText");
   const [submissionMode, setSubmissionMode] = useState<SubmissionMode>(
@@ -93,7 +103,9 @@ export function PublishPage({ context }: { context: AppContext }) {
         setAccountId((current) =>
           refreshed.some(({ id }) => id === current)
             ? current
-            : (refreshed[0]?.id ?? ""),
+            : (refreshed.find(({ id }) => id === preferredAccountId)?.id ??
+              refreshed[0]?.id ??
+              ""),
         );
       })
       .catch((error) =>
@@ -112,7 +124,7 @@ export function PublishPage({ context }: { context: AppContext }) {
       active = false;
       stopUpdates();
     };
-  }, [context]);
+  }, [context, preferredAccountId]);
 
   useEffect(() => {
     if (supportedForms.has(contentForm)) return;

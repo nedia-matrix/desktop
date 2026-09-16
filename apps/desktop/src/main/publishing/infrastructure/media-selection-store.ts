@@ -1,27 +1,16 @@
 import { randomUUID } from "node:crypto";
 
-import type { StartPublicationInput } from "@nedia-matrix/application-publishing";
-import type { PublishContentForm } from "@nedia-matrix/ipc-contracts";
+import {
+  MediaSelectionUnavailableError,
+  type MediaSelection,
+  type StartPublicationInput,
+} from "@nedia-matrix/publishing";
+import type { SupportedPublishContentForm as PublishContentForm } from "@nedia-matrix/publishing";
 
 const MEDIA_SELECTION_TTL_MS = 30 * 60_000;
 
-export interface MediaSelection {
-  readonly accountId: string;
-  readonly contentForm: PublishContentForm;
-  readonly filePaths: readonly string[];
-  readonly files: StartPublicationInput["assets"];
-  readonly createdAt: number;
-}
-
 interface StoredMediaSelection extends MediaSelection {
   inUse: boolean;
-}
-
-export class MediaSelectionUnavailableError extends TypeError {
-  constructor() {
-    super("Media selection is missing, expired, or in use");
-    this.name = "MediaSelectionUnavailableError";
-  }
 }
 
 export class MediaSelectionStore {
@@ -30,7 +19,7 @@ export class MediaSelectionStore {
   create(input: {
     accountId: string;
     contentForm: PublishContentForm;
-    filePaths: readonly string[];
+    resourceReferences: readonly string[];
     files: StartPublicationInput["assets"];
   }): string {
     this.prune();
@@ -62,7 +51,7 @@ export class MediaSelectionStore {
     return {
       accountId: selection.accountId,
       contentForm: selection.contentForm,
-      filePaths: selection.filePaths,
+      resourceReferences: selection.resourceReferences,
       files: selection.files,
       createdAt: selection.createdAt,
     };

@@ -1,0 +1,125 @@
+import {
+  assertPlatformContentSnapshot,
+  type PlatformContentRepository,
+  type PlatformContentSnapshot,
+  type PlatformContentSyncRun,
+} from "@nedia-matrix/platform-content";
+import type { DesktopMetadataDatabase } from "../../persistence/desktop-metadata-database.js";
+
+function parseContent(value: unknown): PlatformContentSnapshot {
+  return assertPlatformContentSnapshot(value as PlatformContentSnapshot);
+}
+
+function parseRun(value: unknown): PlatformContentSyncRun {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("Invalid platform content sync run");
+  }
+  const run = value as Partial<PlatformContentSyncRun>;
+  if (
+    typeof run.id !== "string" ||
+    !run.id.trim() ||
+    typeof run.accountId !== "string" ||
+    !run.accountId.trim() ||
+    !(["completed", "partial", "failed"] as const).some(
+      (status) => status === run.status,
+    ) ||
+    typeof run.startedAt !== "string" ||
+    Number.isNaN(Date.parse(run.startedAt)) ||
+    typeof run.completedAt !== "string" ||
+    Number.isNaN(Date.parse(run.completedAt)) ||
+    !Number.isSafeInteger(run.pagesRead) ||
+    run.pagesRead! < 0 ||
+    !Number.isSafeInteger(run.itemsRead) ||
+    run.itemsRead! < 0 ||
+    !(
+      run.remoteTotal === null ||
+      (Number.isSafeInteger(run.remoteTotal) && run.remoteTotal! >= 0)
+    ) ||
+    !Array.isArray(run.diagnostics) ||
+    !run.diagnostics.every((message) => typeof message === "string") ||
+    Date.parse(run.startedAt) > Date.parse(run.completedAt)
+  ) {
+    throw new TypeError("Invalid platform content sync run");
+  }
+  return run as PlatformContentSyncRun;
+}
+
+export class SqlitePlatformContentRepository implements PlatformContentRepository {
+  constructor(private readonly database: DesktopMetadataDatabase) {}
+
+  listByAccount(accountId: string): PlatformContentSnapshot[] {
+    return this.database.connection
+      .prepare(
+        "SELECT record FROM platform_contents WHERE account_id=? ORDER BY json_extract(record, '$.publishedAt') DESC, id DESC",
+      )
+      .all(accountId)
+      .map((row) => parseContent(JSON.parse(String(row.record))));
+  }
+
+  find(
+    accountId: string,
+    externalContentId: string,
+  ): PlatformContentSnapshot | undefined {
+    const row = this.database.connection
+      .prepare(
+        "SELECT record FROM platform_contents WHERE account_id=? AND external_content_id=?",
+      )
+      .get(accountId, externalContentId);
+    return row ? parseContent(JSON.parse(String(row.record))) : undefined;
+  }
+
+  saveAll(
+    contents: readonly PlatformContentSnapshot[],
+    run: PlatformContentSyncRun,
+  ): void {
+    const operation = () => {
+      const parsedRun = parseRun(run);
+      const statement = this.database.connection.prepare(`
+        INSERT INTO platform_contents VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          account_id=excluded.account_id,
+          external_content_id=excluded.external_content_id,
+          record=excluded.record
+      `);
+      for (const content of contents) {
+        const parsed = parseContent(content);
+        if (parsed.accountId !== parsedRun.accountId) {
+          throw new Error("Content sync run account mismatch");
+        }
+        statement.run(
+          parsed.id,
+          parsed.accountId,
+          parsed.externalContentId,
+          JSON.stringify(parsed),
+        );
+      }
+      this.writeRun(parsedRun);
+    };
+    if (this.database.connection.isTransaction) operation();
+    else this.database.transaction(operation);
+  }
+
+  saveRun(run: PlatformContentSyncRun): void {
+    const operation = () => this.writeRun(parseRun(run));
+    if (this.database.connection.isTransaction) operation();
+    else this.database.transaction(operation);
+  }
+
+  latestRun(accountId: string): PlatformContentSyncRun | undefined {
+    const row = this.database.connection
+      .prepare(
+        "SELECT record FROM platform_content_sync_runs WHERE account_id=?",
+      )
+      .get(accountId);
+    return row ? parseRun(JSON.parse(String(row.record))) : undefined;
+  }
+
+  private writeRun(run: PlatformContentSyncRun): void {
+    this.database.connection
+      .prepare(
+        `INSERT INTO platform_content_sync_runs VALUES (?, ?)
+         ON CONFLICT(account_id) DO UPDATE SET record=excluded.record`,
+      )
+      .run(run.accountId, JSON.stringify(run));
+  }
+}

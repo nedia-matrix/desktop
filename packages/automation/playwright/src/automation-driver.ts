@@ -8,15 +8,18 @@ import type {
   ElementReference,
   EvidenceReference,
   LocatorCandidate,
-} from "@nedia-matrix/automation-contracts";
-import type { PlatformBrowserPolicy } from "@nedia-matrix/platform-core";
-import type { Locator, Page } from "playwright";
+} from "@nedia-matrix/automation-engine";
+import type { PlatformBrowserPolicy } from "@nedia-matrix/platform-sdk";
+import type { ElementHandle, FileChooser, Locator, Page } from "playwright";
 
 import { isAllowedPlatformNavigation } from "./navigation-policy.js";
 
 const MAX_ELEMENT_REFERENCES = 500;
 const MAX_QUERY_MATCHES = 100;
 const SHADOW_CLICK_MARKER = "data-nedia-shadow-click";
+const TYPING_DELAY_MS = 20;
+const INPUT_SETTLE_MS = 100;
+const FILE_CHOOSER_TIMEOUT_MS = 5_000;
 
 type LocatorRoot = Page | Locator;
 
@@ -289,7 +292,28 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
     const contentEditable = await locator.evaluate(
       (element) => element.getAttribute("contenteditable") === "true",
     );
-    await locator.fill(value);
+    await locator.click();
+    await delay(INPUT_SETTLE_MS);
+    await locator.press("ControlOrMeta+A");
+    await locator.press("Backspace");
+    const deadline =
+      Date.now() + 30_000 + Array.from(value).length * TYPING_DELAY_MS * 2;
+    for (const part of value.match(/ +|[^ ]+/g) ?? []) {
+      if (part.startsWith(" ")) {
+        // Body spaces are text, not Space shortcuts that rich editors use to commit topics.
+        // Insert one at a time to preserve the normal typing pace and input event granularity.
+        await locator.focus();
+        for (const space of part) {
+          await this.page.keyboard.insertText(space);
+          await delay(TYPING_DELAY_MS);
+        }
+      } else {
+        await locator.pressSequentially(part, {
+          delay: TYPING_DELAY_MS,
+          timeout: Math.max(1, deadline - Date.now()),
+        });
+      }
+    }
     await delay(contentEditable ? 500 : 50);
     await locator.blur();
     await delay(50);
@@ -319,16 +343,21 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
   async typeText(
     target: ElementReference,
     value: string,
-    delayMs = 0,
+    delayMs = TYPING_DELAY_MS,
   ): Promise<void> {
     const locator = this.locatorFor(target);
     await focusAtTextEnd(locator);
-    await locator.pressSequentially(value, { delay: delayMs });
+    await delay(INPUT_SETTLE_MS);
+    await locator.pressSequentially(value, {
+      delay: delayMs,
+      timeout: 30_000 + Array.from(value).length * delayMs * 2,
+    });
   }
 
   async pressKey(target: ElementReference, key: AutomationKey): Promise<void> {
     const locator = this.locatorFor(target);
     await focusAtTextEnd(locator);
+    await delay(INPUT_SETTLE_MS);
     await locator.press(key);
   }
 
@@ -337,7 +366,121 @@ export class PlaywrightAutomationDriver implements AutomationDriver {
     filePaths: readonly string[],
   ): Promise<void> {
     assertAbsoluteFilePaths(filePaths);
-    await this.locatorFor(target).setInputFiles([...filePaths]);
+    const input = this.locatorFor(target);
+    // Only standard HTML associations are inferred; custom upload buttons are not guessed.
+    const handle = await input.evaluateHandle((element) => {
+      const fileInput = element as unknown as {
+        tagName: string;
+        type: string;
+        disabled: boolean;
+        labels?: ArrayLike<typeof element>;
+      };
+      if (
+        fileInput.tagName !== "INPUT" ||
+        fileInput.type !== "file" ||
+        fileInput.disabled
+      )
+        return null;
+      return (
+        [...Array.from(fileInput.labels ?? []), element].find((candidate) => {
+          const style =
+            candidate.ownerDocument.defaultView?.getComputedStyle(candidate);
+          const rect = candidate.getBoundingClientRect();
+          return (
+            style &&
+            style.visibility !== "hidden" &&
+            style.visibility !== "collapse" &&
+            style.pointerEvents !== "none" &&
+            rect.width > 0 &&
+            rect.height > 0
+          );
+        }) ?? null
+      );
+    });
+    try {
+      const trigger = handle.asElement();
+      // A visible file input may sit underneath a custom upload button. Trial
+      // checks actionability without clicking or opening a chooser.
+      let clickable = false;
+      if (trigger) {
+        try {
+          await trigger.click({
+            trial: true,
+            timeout: FILE_CHOOSER_TIMEOUT_MS,
+          });
+          clickable = true;
+        } catch (error) {
+          if (!(error instanceof Error) || error.name !== "TimeoutError") {
+            throw error;
+          }
+        }
+      }
+      if (!trigger || !clickable) {
+        await delay(INPUT_SETTLE_MS);
+        await input.setInputFiles([...filePaths]);
+        return;
+      }
+      await this.uploadThroughChooser(input, trigger, filePaths);
+    } finally {
+      await handle.dispose();
+    }
+  }
+
+  private async uploadThroughChooser(
+    input: Locator,
+    trigger: ElementHandle,
+    filePaths: readonly string[],
+  ): Promise<void> {
+    let onChooser!: (chooser: FileChooser) => void;
+    let onClose!: () => void;
+    let cancelWait!: (error: Error) => void;
+    const controller = new AbortController();
+    let timer!: ReturnType<typeof setTimeout>;
+    const chooserPromise = new Promise<FileChooser>((resolve, reject) => {
+      cancelWait = reject;
+      onChooser = resolve;
+      onClose = () => reject(new Error("file_chooser_page_closed"));
+      this.page.on("filechooser", onChooser);
+      this.page.on("close", onClose);
+    });
+    try {
+      // Attach both rejection handlers before clicking; either operation may fail first.
+      const [chooser] = await Promise.all([
+        chooserPromise,
+        trigger
+          .click({
+            timeout: FILE_CHOOSER_TIMEOUT_MS,
+            signal: controller.signal,
+          })
+          .then(() => {
+            if (controller.signal.aborted) return;
+            // Only time the chooser after the click completes, so a blocked
+            // click retains Playwright's actionable diagnostic instead.
+            timer = setTimeout(
+              () => cancelWait(new Error("file_chooser_timeout")),
+              FILE_CHOOSER_TIMEOUT_MS,
+            );
+          }),
+      ]);
+      if (
+        !(await input.evaluate(
+          (element, selected) => element === selected,
+          chooser.element(),
+        ))
+      ) {
+        throw new Error("file_chooser_target_mismatch");
+      }
+      await delay(INPUT_SETTLE_MS);
+      await chooser.setFiles([...filePaths], {
+        timeout: FILE_CHOOSER_TIMEOUT_MS,
+      });
+    } finally {
+      controller.abort();
+      cancelWait(new Error("file_chooser_wait_finished"));
+      clearTimeout(timer);
+      this.page.off("filechooser", onChooser);
+      this.page.off("close", onClose);
+    }
   }
 
   async dropFiles(

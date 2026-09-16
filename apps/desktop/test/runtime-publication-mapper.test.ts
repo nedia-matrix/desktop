@@ -1,4 +1,4 @@
-import type { PublicationSummary } from "@nedia-matrix/ipc-contracts";
+import type { PublicationSummary } from "@nedia-matrix/publishing";
 import { describe, expect, it } from "vitest";
 
 import {

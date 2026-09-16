@@ -2,7 +2,7 @@ import type {
   AutomationDriver,
   AutomationPage,
   ConditionDefinition,
-} from "@nedia-matrix/automation-contracts";
+} from "./index.js";
 
 import { AutomationError } from "./errors.js";
 import { resolveTarget } from "./target-resolution.js";

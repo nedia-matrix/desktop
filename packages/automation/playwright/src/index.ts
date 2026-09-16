@@ -1,7 +1,10 @@
 export { PlaywrightAutomationDriver } from "./automation-driver.js";
 export { isAllowedPlatformNavigation } from "./navigation-policy.js";
+export { createPlaywrightPlatformDataClient } from "./platform-data-client.js";
 export {
   browserLaunchCandidates,
+  openPersistentBrowserContext,
+  type OpenedBrowserContext,
   openPersistentBrowserSession,
   type OpenedPersistentBrowserSession,
   type OpenPersistentBrowserSessionOptions,
@@ -13,3 +16,7 @@ export {
   type PlaywrightSessionProbeClient,
 } from "./session-probe-client.js";
 export type { Response as PlaywrightResponse } from "playwright";
+export {
+  createManagedBrowserPage,
+  type ManagedBrowserPage,
+} from "./managed-browser-page.js";

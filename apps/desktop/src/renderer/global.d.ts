@@ -1,4 +1,4 @@
-import type { MatrixDesktopApi } from "@nedia-matrix/ipc-contracts";
+import type { MatrixDesktopApi } from "../bridge/api.js";
 
 declare global {
   interface Window {

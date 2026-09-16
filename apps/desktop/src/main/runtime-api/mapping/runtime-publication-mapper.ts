@@ -1,9 +1,9 @@
-import type { PublicationSummary } from "@nedia-matrix/ipc-contracts";
+import type { PublicationSummary } from "@nedia-matrix/publishing";
 
 import type {
   PrepareRemoteDraftRequest,
   RemotePublicationAsset,
-} from "../../publishing/public.js";
+} from "@nedia-matrix/publishing";
 
 export interface RuntimePublicationRequest extends PrepareRemoteDraftRequest {
   platform: string;

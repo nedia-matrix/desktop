@@ -1,18 +1,29 @@
-import {
-  ipcChannels,
-  type CreatePlatformAccountRequest,
-  type MatrixDesktopApi,
-  type OpenPlatformLoginRequest,
-  type OpenPublicationRequest,
-  type PlatformAccountRequest,
-  type PreparePublishDraftRequest,
-  type PublishResultUpdate,
-  type SelectPublishMediaRequest,
-  type SetLocalRuntimeRunningRequest,
-} from "@nedia-matrix/ipc-contracts";
+import type { MatrixDesktopApi } from "../bridge/api.js";
+import { ipcChannels } from "../bridge/channels.js";
+import type {
+  FindAutomationTraceRequest,
+  OpenApplicationUpdateDownloadRequest,
+  SetLocalRuntimeRunningRequest,
+} from "../bridge/contracts.js";
+import type {
+  CreatePlatformAccountRequest,
+  OpenPlatformLoginRequest,
+  PlatformAccountRequest,
+} from "@nedia-matrix/account-management";
+import type {
+  OpenPublicationRequest,
+  PreparePublishDraftRequest,
+  PublishResultUpdate,
+  SelectPublishMediaRequest,
+} from "@nedia-matrix/publishing";
 import { contextBridge, ipcRenderer } from "electron";
 
 const api: MatrixDesktopApi = {
+  checkForApplicationUpdate: () =>
+    ipcRenderer.invoke(ipcChannels.checkForApplicationUpdate),
+  openApplicationUpdateDownload: (
+    request: OpenApplicationUpdateDownloadRequest,
+  ) => ipcRenderer.invoke(ipcChannels.openApplicationUpdateDownload, request),
   listPlatforms: () => ipcRenderer.invoke(ipcChannels.listPlatforms),
   listPlatformAccounts: () =>
     ipcRenderer.invoke(ipcChannels.listPlatformAccounts),
@@ -24,6 +35,8 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.openPlatformAccount, request),
   refreshPlatformAccount: (request: PlatformAccountRequest) =>
     ipcRenderer.invoke(ipcChannels.refreshPlatformAccount, request),
+  refreshPlatformAccountProfile: (request: PlatformAccountRequest) =>
+    ipcRenderer.invoke(ipcChannels.refreshPlatformAccountProfile, request),
   removePlatformAccount: (request: PlatformAccountRequest) =>
     ipcRenderer.invoke(ipcChannels.removePlatformAccount, request),
   onPlatformAccountsChanged: (listener) => {
@@ -32,11 +45,17 @@ const api: MatrixDesktopApi = {
     return () =>
       ipcRenderer.removeListener(ipcChannels.platformAccountsChanged, handler);
   },
+  listPlatformContents: (request: PlatformAccountRequest) =>
+    ipcRenderer.invoke(ipcChannels.listPlatformContents, request),
+  refreshPlatformContents: (request: PlatformAccountRequest) =>
+    ipcRenderer.invoke(ipcChannels.refreshPlatformContents, request),
   selectPublishMedia: (request: SelectPublishMediaRequest) =>
     ipcRenderer.invoke(ipcChannels.selectPublishMedia, request),
   preparePublishDraft: (request: PreparePublishDraftRequest) =>
     ipcRenderer.invoke(ipcChannels.preparePublishDraft, request),
   listPublications: () => ipcRenderer.invoke(ipcChannels.listPublications),
+  openPublicationReview: (request: OpenPublicationRequest) =>
+    ipcRenderer.invoke(ipcChannels.openPublicationReview, request),
   openPublication: (request: OpenPublicationRequest) =>
     ipcRenderer.invoke(ipcChannels.openPublication, request),
   onPublishResultUpdate: (listener: (update: PublishResultUpdate) => void) => {
@@ -48,6 +67,10 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.getLocalRuntimeStatus),
   setLocalRuntimeRunning: (request: SetLocalRuntimeRunningRequest) =>
     ipcRenderer.invoke(ipcChannels.setLocalRuntimeRunning, request),
+  openAutomationLogDirectory: () =>
+    ipcRenderer.invoke(ipcChannels.openAutomationLogDirectory),
+  findAutomationTrace: (request: FindAutomationTraceRequest) =>
+    ipcRenderer.invoke(ipcChannels.findAutomationTrace, request),
 };
 
 contextBridge.exposeInMainWorld("matrix", Object.freeze(api));

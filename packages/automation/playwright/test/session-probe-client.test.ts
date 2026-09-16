@@ -19,7 +19,7 @@ function fixture() {
         source: {
           kind: "observed-response",
           method: "POST",
-          url: "https://cp.kuaishou.com/rest/v2/creator/pc/authority/account/current",
+          url: "https://cp.kuaishou.com/rest/cp/creator/pc/home/userInfo",
           timeoutMs: 100,
         },
         fields: { externalAccountId: ["id"], nickname: ["name"] },
@@ -39,7 +39,7 @@ function accountResponse(body: string) {
   return {
     request: () => ({ method: () => "POST" }),
     url: () =>
-      "https://cp.kuaishou.com/rest/v2/creator/pc/authority/account/current?from=profile",
+      "https://cp.kuaishou.com/rest/cp/creator/pc/home/userInfo?from=profile",
     status: () => 200,
     ok: () => true,
     body: async () => Buffer.from(body),
@@ -51,7 +51,7 @@ describe("Playwright session response probes", () => {
     const { client, pageEvents } = fixture();
     const waiting = client.waitForJsonResponse({
       method: "POST",
-      url: "https://cp.kuaishou.com/rest/v2/creator/pc/authority/account/current",
+      url: "https://cp.kuaishou.com/rest/cp/creator/pc/home/userInfo",
       timeoutMs: 100,
     });
 
@@ -78,7 +78,7 @@ describe("Playwright session response probes", () => {
     await expect(
       client.waitForJsonResponse({
         method: "POST",
-        url: "https://cp.kuaishou.com/rest/v2/creator/pc/authority/account/current",
+        url: "https://cp.kuaishou.com/rest/cp/creator/pc/home/userInfo",
         timeoutMs: 100,
       }),
     ).resolves.toMatchObject({ status: 200 });

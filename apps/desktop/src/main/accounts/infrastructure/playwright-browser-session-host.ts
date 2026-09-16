@@ -1,34 +1,54 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-
 import {
   browserProfileDirectory,
-  createPlaywrightSessionProbeClient,
-  openPersistentBrowserSession,
-  PlaywrightAutomationDriver,
-  type OpenedPersistentBrowserSession,
+  createManagedBrowserPage,
+  createPlaywrightPlatformDataClient,
+  openPersistentBrowserContext,
+  type ManagedBrowserPage,
+  type OpenedBrowserContext,
 } from "@nedia-matrix/automation-playwright";
-import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
+import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
+import type { PublishAutomationDiagnosticTrace } from "@nedia-matrix/publishing";
 import type {
   PlatformLoginEntry,
   PlatformModule,
-} from "@nedia-matrix/platform-core";
+} from "@nedia-matrix/platform-sdk";
 import { app } from "electron";
+import { detectPlatformSession } from "@nedia-matrix/automation-engine";
+
+interface BrowserAutomationDiagnosticTrace {
+  readonly traceId: string;
+  bind(binding: { pageId?: string }): void;
+  report(event: {
+    component: "browser" | "session";
+    event: string;
+    level?: "debug" | "info" | "warn" | "error";
+    details?: Readonly<Record<string, unknown>>;
+  }): void;
+}
 
 interface ProfileEntry {
   accountId: string;
-  session: OpenedPersistentBrowserSession;
+  browser: OpenedBrowserContext;
+  pages: Map<string, ManagedBrowserPage>;
+  syncing: number;
+  startupPages: ReturnType<OpenedBrowserContext["context"]["pages"]>;
+  idle: Promise<void>;
+  resolveIdle(): void;
 }
-
-interface PlaywrightBrowserSessionHostDependencies {
-  openSession: typeof openPersistentBrowserSession;
+interface Dependencies {
+  openContext: typeof openPersistentBrowserContext;
+  createPage: typeof createManagedBrowserPage;
+  detectSession: typeof detectPlatformSession;
   removeProfileDirectory: typeof rm;
   profilesRoot(): string;
   evidenceRoot(): string;
 }
-
-const defaultDependencies: PlaywrightBrowserSessionHostDependencies = {
-  openSession: openPersistentBrowserSession,
+const defaults: Dependencies = {
+  openContext: openPersistentBrowserContext,
+  createPage: createManagedBrowserPage,
+  detectSession: detectPlatformSession,
   removeProfileDirectory: rm,
   profilesRoot: () => join(app.getPath("userData"), "browser-profiles"),
   evidenceRoot: () => join(app.getPath("userData"), "automation-evidence"),
@@ -37,159 +57,542 @@ const defaultDependencies: PlaywrightBrowserSessionHostDependencies = {
 export class PlaywrightBrowserSessionHost {
   private readonly profiles = new Map<string, ProfileEntry>();
   private readonly transitions = new Map<string, Promise<void>>();
+  private readonly channels = new Map<string, string>();
+  private stopping = false;
 
   constructor(
     private readonly onSessionClosed: (accountId: string) => void,
-    private readonly dependencies: PlaywrightBrowserSessionHostDependencies = defaultDependencies,
+    private readonly dependencies: Dependencies = defaults,
+    private readonly onUnsupportedPopup: (publicationId: string) => void = () =>
+      undefined,
   ) {}
 
-  get size(): number {
+  get size() {
     return this.profiles.size;
   }
 
-  async openForLogin(
-    account: PlatformAccountSummary,
+  private options(
+    account: PlatformAccountSnapshot,
     platform: PlatformModule,
-    loginEntry: PlatformLoginEntry,
-  ): Promise<OpenedPersistentBrowserSession> {
-    const opened = await this.openForAutomation(account, platform);
-    await opened.driver.navigate(loginEntry.url);
-    await opened.focus();
+    diagnostics?: BrowserAutomationDiagnosticTrace,
+  ) {
+    return {
+      browser: platform.browser,
+      sessionDetection: platform.accounts.detection,
+      profileId: account.profileId,
+      profileDirectory: browserProfileDirectory(
+        this.dependencies.profilesRoot(),
+        account.profileId,
+      ),
+      evidenceDirectory: join(
+        this.dependencies.evidenceRoot(),
+        diagnostics?.traceId ?? account.id,
+      ),
+    };
+  }
+
+  private async ensureContext(
+    account: PlatformAccountSnapshot,
+    platform: PlatformModule,
+    headless: boolean,
+  ) {
+    if (this.stopping) throw new Error("Desktop is shutting down");
+    let entry = this.profiles.get(account.profileId);
+    if (entry?.browser.headless && !headless) {
+      await entry.idle;
+      await entry.browser.close();
+      if (this.profiles.get(account.profileId) === entry)
+        this.profiles.delete(account.profileId);
+      entry = undefined;
+    }
+    if (entry) return entry;
+    if (this.stopping) throw new Error("Desktop is shutting down");
+    const channel = this.channels.get(account.profileId);
+    const browser = await this.dependencies.openContext({
+      ...this.options(account, platform),
+      headless,
+      ...(channel ? { preferredChannel: channel } : {}),
+    });
+    this.channels.set(account.profileId, browser.channel);
+    const opened: ProfileEntry = {
+      accountId: account.id,
+      browser,
+      pages: new Map(),
+      syncing: 0,
+      startupPages: browser.context
+        .pages()
+        .filter((page) => page.url() === "about:blank"),
+      idle: Promise.resolve(),
+      resolveIdle: () => undefined,
+    };
+    this.profiles.set(account.profileId, opened);
+    browser.context.once("close", () => {
+      if (this.profiles.get(account.profileId) !== opened) return;
+      this.profiles.delete(account.profileId);
+      // Closing a sync-only browser must not discard a pending publish media selection.
+      if (!browser.headless) this.onSessionClosed(account.id);
+    });
+    for (const existingPage of browser.context.pages()) {
+      if (existingPage.url() === "about:blank") continue;
+      const managed = await this.dependencies.createPage(
+        browser,
+        this.options(account, platform),
+        "user",
+        undefined,
+        existingPage,
+      );
+      await managed.handoff();
+      opened.pages.set(managed.id, managed);
+      existingPage.once("close", () => {
+        opened.pages.delete(managed.id);
+        void managed.dispose();
+      });
+    }
     return opened;
   }
 
-  async openForAutomation(
-    account: PlatformAccountSummary,
+  private async newPage(
+    entry: ProfileEntry,
+    account: PlatformAccountSnapshot,
     platform: PlatformModule,
-  ): Promise<OpenedPersistentBrowserSession> {
-    return this.withProfileTransition(account.profileId, async () => {
-      const existing = this.profiles.get(account.profileId);
-      if (existing && !existing.session.page.isClosed()) {
-        return existing.session;
+    purpose: ManagedBrowserPage["purpose"],
+    publicationId?: string,
+    diagnostics?: BrowserAutomationDiagnosticTrace,
+  ) {
+    const page = await this.dependencies.createPage(
+      entry.browser,
+      this.options(account, platform, diagnostics),
+      purpose,
+      publicationId,
+    );
+    entry.pages.set(page.id, page);
+    diagnostics?.bind({ pageId: page.id });
+    diagnostics?.report({
+      component: "browser",
+      event: "browser.page.opened",
+      details: { purpose, owner: page.owner },
+    });
+    page.page.on("popup", (popup) => {
+      // Popups are human-owned, never silently included in the original result stream.
+      void this.dependencies
+        .createPage(
+          entry.browser,
+          this.options(account, platform),
+          "user",
+          undefined,
+          popup,
+        )
+        .then(async (child) => {
+          await child.handoff();
+          entry.pages.set(child.id, child);
+          popup.once("close", () => {
+            entry.pages.delete(child.id);
+            void child.dispose();
+          });
+          if (purpose === "publish" && publicationId)
+            this.onUnsupportedPopup(publicationId);
+        })
+        .catch((error: unknown) =>
+          console.error("Failed to register browser popup", error),
+        );
+    });
+    // Discard only empty startup tabs after another page exists, never restored user pages.
+    for (const initial of entry.startupPages) {
+      if (
+        initial !== page.page &&
+        !initial.isClosed() &&
+        initial.url() === "about:blank" &&
+        ![...entry.pages.values()].some((managed) => managed.page === initial)
+      ) {
+        await initial.close();
       }
-      if (existing) {
-        this.profiles.delete(account.profileId);
-        await existing.session.close().catch(() => undefined);
+    }
+    entry.startupPages = [];
+    page.page.once("close", () => {
+      diagnostics?.report({
+        component: "browser",
+        event: "browser.page.closed",
+        details: { purpose, reason: "page_closed" },
+      });
+      // Publish entries remain active until the observation has persisted its terminal.
+      if (purpose !== "publish") {
+        entry.pages.delete(page.id);
+        void page.dispose();
       }
+    });
+    return page;
+  }
 
-      const opened = await this.dependencies.openSession({
-        browser: platform.browser,
-        sessionDetection: platform.accounts.detection,
-        profileId: account.profileId,
-        profileDirectory: this.profileDirectory(account.profileId),
-        evidenceDirectory: join(this.dependencies.evidenceRoot(), account.id),
+  async openForLogin(
+    account: PlatformAccountSnapshot,
+    platform: PlatformModule,
+    loginEntry: PlatformLoginEntry,
+  ) {
+    return this.withProfileTransition(account.profileId, async () => {
+      const entry = await this.ensureContext(account, platform, false);
+      if (entry.syncing || this.hasPublication(entry))
+        throw new Error("账号正在执行任务，请结束后再登录或切换账号");
+      // Never navigate an existing human-owned page to perform login.
+      const page = await this.newPage(entry, account, platform, "user");
+      try {
+        await page.driver.navigate(loginEntry.url);
+        await page.handoff();
+        await page
+          .focus()
+          .catch((error: unknown) =>
+            console.error("Unable to focus user page", error),
+          );
+        return page;
+      } catch (error) {
+        await page.close();
+        throw error;
+      }
+    });
+  }
+
+  async openUserPage(
+    account: PlatformAccountSnapshot,
+    platform: PlatformModule,
+  ) {
+    return this.withProfileTransition(account.profileId, async () => {
+      const entry = await this.ensureContext(account, platform, false);
+      const existing = [...entry.pages.values()].find(
+        (page) => page.purpose === "user" && !page.page.isClosed(),
+      );
+      if (existing) {
+        await existing.focus();
+        return existing;
+      }
+      const page = await this.newPage(entry, account, platform, "user");
+      try {
+        await page.driver.navigate(platform.browser.startUrl);
+        await page.handoff();
+        await page
+          .focus()
+          .catch((error: unknown) =>
+            console.error("Unable to focus user page", error),
+          );
+        return page;
+      } catch (error) {
+        await page.close();
+        throw error;
+      }
+    });
+  }
+
+  async openForPublication(
+    account: PlatformAccountSnapshot,
+    platform: PlatformModule,
+    publicationId: string,
+    diagnostics?: PublishAutomationDiagnosticTrace,
+  ) {
+    diagnostics = isolateDiagnostics(diagnostics);
+    return this.withProfileTransition(account.profileId, async () => {
+      const reusedContext = this.profiles.has(account.profileId);
+      const entry = await this.ensureContext(account, platform, false);
+      diagnostics?.report({
+        component: "browser",
+        event: reusedContext
+          ? "browser.context.reused"
+          : "browser.context.opened",
+        details: {
+          headless: entry.browser.headless,
+          browserChannel: entry.browser.channel,
+        },
       });
-      const entry: ProfileEntry = {
-        accountId: account.id,
-        session: opened,
-      };
-      this.profiles.set(account.profileId, entry);
-      opened.context.once("close", () => {
-        this.onSessionClosed(account.id);
-        if (this.profiles.get(account.profileId) === entry) {
-          this.profiles.delete(account.profileId);
+      if (entry.syncing || this.hasPublication(entry))
+        throw new Error("账号正在执行任务");
+      if (platform.browser.sessionCapabilities?.isolatedPages === false)
+        throw new Error("此平台不支持独立发布页，请使用平台页面人工发布");
+      const page = await this.newPage(
+        entry,
+        account,
+        platform,
+        "publish",
+        publicationId,
+        diagnostics,
+      );
+      const verifyIdentity = async () => {
+        const startedAt = Date.now();
+        diagnostics?.report({
+          component: "session",
+          event: "session.detection.started",
+        });
+        const detected = await this.dependencies.detectSession(
+          platform.accounts.detection,
+          page.driver,
+          page.sessionProbeClient,
+        );
+        diagnostics?.report({
+          component: "session",
+          event: "session.detection.completed",
+          details: {
+            status: detected.status,
+            ...(detected.status === "unknown"
+              ? {}
+              : { source: detected.source }),
+            durationMs: Math.max(0, Date.now() - startedAt),
+          },
+        });
+        if (
+          detected.status !== "authenticated" ||
+          detected.externalAccountId !== account.externalAccountId ||
+          detected.identityScheme !== account.identityScheme
+        ) {
+          throw new Error(
+            "独立发布页无法确认原账号身份，请重新登录或使用平台页面人工发布",
+          );
         }
-      });
-      return opened;
+      };
+      try {
+        await page.driver.navigate(platform.browser.startUrl);
+        await verifyIdentity();
+      } catch (error) {
+        await page.close();
+        entry.pages.delete(page.id);
+        throw error;
+      }
+      let released = false;
+      return {
+        ...page,
+        verifyIdentity,
+        get owner() {
+          return page.owner;
+        },
+        async focus() {
+          try {
+            await page.focus();
+            diagnostics?.report({
+              component: "browser",
+              event: "browser.page.focused",
+            });
+          } catch (error) {
+            diagnostics?.report({
+              component: "browser",
+              event: "browser.page.focus_failed",
+              level: "warn",
+              details: {
+                errorName: error instanceof Error ? error.name : "UnknownError",
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Unable to focus page",
+              },
+            });
+            throw error;
+          }
+        },
+        async handoff() {
+          await page.handoff();
+          diagnostics?.report({
+            component: "browser",
+            event: "browser.page.handed_off",
+            details: { owner: page.owner },
+          });
+        },
+        async release() {
+          if (released) return;
+          await page.release();
+          released = true;
+          entry.pages.delete(page.id);
+          // Keep completed review pages registered as user-owned resources.
+          if (!page.page.isClosed()) {
+            entry.pages.set(page.id, {
+              ...page,
+              purpose: "user",
+              get owner() {
+                return page.owner;
+              },
+            });
+            page.page.once("close", () => entry.pages.delete(page.id));
+          }
+        },
+      };
     });
   }
 
   async openForVerification(
-    account: PlatformAccountSummary,
+    account: PlatformAccountSnapshot,
     platform: PlatformModule,
+    diagnostics?: BrowserAutomationDiagnosticTrace,
   ) {
-    const opened = await this.openForAutomation(account, platform);
-    const originalPage = opened.page;
-    const page = await opened.context.newPage();
-    const sessionProbeClient = createPlaywrightSessionProbeClient(
-      opened.context,
-      page,
-      platform.browser,
-      platform.accounts.detection,
+    diagnostics = isolateBrowserDiagnostics(diagnostics);
+    const acquired = await this.withProfileTransition(
+      account.profileId,
+      async () => {
+        const capabilities = platform.browser.sessionCapabilities;
+        const existing = this.profiles.get(account.profileId);
+        if (!existing && !capabilities?.headlessSync)
+          throw new Error("此平台尚未启用无头同步，请先打开账号浏览器");
+        if (
+          existing &&
+          this.hasPublication(existing) &&
+          !capabilities?.parallelSync
+        )
+          throw new Error("此平台发布期间暂不支持并行同步");
+        const reusedContext = this.profiles.has(account.profileId);
+        const entry = await this.ensureContext(account, platform, true);
+        diagnostics?.report({
+          component: "browser",
+          event: reusedContext
+            ? "browser.context.reused"
+            : "browser.context.opened",
+          details: {
+            purpose: "sync",
+            headless: entry.browser.headless,
+            browserChannel: entry.browser.channel,
+          },
+        });
+        let page: ManagedBrowserPage;
+        try {
+          page = await this.newPage(
+            entry,
+            account,
+            platform,
+            "sync",
+            undefined,
+            diagnostics,
+          );
+        } catch (error) {
+          if (entry.browser.headless && entry.syncing === 0) {
+            await entry.browser.close();
+            if (this.profiles.get(account.profileId) === entry)
+              this.profiles.delete(account.profileId);
+          }
+          throw error;
+        }
+        if (entry.syncing++ === 0)
+          entry.idle = new Promise((resolve) => {
+            entry.resolveIdle = resolve;
+          });
+        return { entry, page };
+      },
     );
-    const driver = new PlaywrightAutomationDriver(
-      page,
+    const { entry, page } = acquired;
+    const dataClient = createPlaywrightPlatformDataClient(
+      entry.browser.context,
+      page.page,
       platform.browser,
-      join(this.dependencies.evidenceRoot(), account.id),
     );
-    let closed = false;
-    const close = async () => {
-      if (closed) return;
-      closed = true;
-      sessionProbeClient.dispose();
-      await page.close().catch(() => undefined);
-      if (!originalPage.isClosed()) {
-        await originalPage.bringToFront().catch(() => undefined);
-      }
+    let closing: Promise<void> | undefined;
+    let released = false;
+    const close = (): Promise<void> =>
+      (closing ??= (async () => {
+        dataClient.dispose();
+        await page.close();
+        entry.pages.delete(page.id);
+        released = true;
+        if (--entry.syncing === 0) entry.resolveIdle();
+        await this.withProfileTransition(account.profileId, async () => {
+          if (
+            this.profiles.get(account.profileId) === entry &&
+            entry.browser.headless &&
+            entry.syncing === 0
+          ) {
+            await entry.browser.close();
+            if (this.profiles.get(account.profileId) === entry)
+              this.profiles.delete(account.profileId);
+          }
+        });
+      })().catch((error: unknown) => {
+        if (!released) closing = undefined;
+        throw error;
+      }));
+    let navigation: Promise<void> | undefined;
+    const ensurePage = () =>
+      (navigation ??= page.driver.navigate(platform.browser.startUrl));
+    const probe = page.sessionProbeClient;
+    const sessionProbeClient = {
+      ...probe,
+      async fetchJson(url: string) {
+        const direct = await probe.fetchJson(url);
+        if (direct.ok && direct.body !== null) return direct;
+        await ensurePage();
+        return probe.fetchJson(url);
+      },
+      async waitForJsonResponse(
+        request: Parameters<typeof probe.waitForJsonResponse>[0],
+      ) {
+        await ensurePage();
+        return probe.waitForJsonResponse(request);
+      },
     };
-    try {
-      await page.goto(platform.browser.startUrl, {
-        waitUntil: "domcontentloaded",
-      });
-      if (!originalPage.isClosed()) {
-        await originalPage.bringToFront().catch(() => undefined);
-      }
-      return { driver, sessionProbeClient, close };
-    } catch (error) {
-      await close();
-      throw error;
-    }
+    const driver = new Proxy(page.driver, {
+      get(target, key, receiver) {
+        const method: unknown = Reflect.get(target, key, receiver);
+        if (typeof method !== "function") return method;
+        return async (...args: unknown[]) => {
+          if (key === "query") await ensurePage();
+          return Reflect.apply(method, target, args);
+        };
+      },
+    });
+    return { driver, sessionProbeClient, dataClient, close };
   }
 
-  async closeAutomation(account: PlatformAccountSummary): Promise<void> {
+  async focusPublication(publicationId: string) {
+    for (const entry of this.profiles.values()) {
+      const page = [...entry.pages.values()].find(
+        (candidate) =>
+          candidate.publicationId === publicationId &&
+          !candidate.page.isClosed(),
+      );
+      if (page) {
+        await page.focus();
+        return;
+      }
+    }
+    throw new Error("任务页面已关闭");
+  }
+
+  private hasPublication(entry: ProfileEntry) {
+    return [...entry.pages.values()].some((page) => page.purpose === "publish");
+  }
+
+  async closeAutomation(account: PlatformAccountSnapshot) {
     await this.withProfileTransition(account.profileId, async () => {
-      const existing = this.profiles.get(account.profileId);
-      if (!existing) return;
-      this.profiles.delete(account.profileId);
-      await existing.session.close().catch(() => undefined);
+      const entry = this.profiles.get(account.profileId);
+      if (!entry) return;
+      if (entry.syncing || this.hasPublication(entry))
+        throw new Error("账号仍有活动任务，暂不能关闭环境");
+      await entry.browser.close();
+      if (this.profiles.get(account.profileId) === entry)
+        this.profiles.delete(account.profileId);
     });
   }
-
-  async remove(account: PlatformAccountSummary): Promise<void> {
+  async remove(account: PlatformAccountSnapshot) {
     await this.removeProfile(account.profileId);
   }
-
-  async removeProfile(profileId: string): Promise<void> {
+  async removeProfile(profileId: string) {
     await this.withProfileTransition(profileId, async () => {
-      const existing = this.profiles.get(profileId);
+      const entry = this.profiles.get(profileId);
+      if (entry && (entry.syncing || this.hasPublication(entry)))
+        throw new Error("账号仍有活动任务，暂不能删除环境");
+      if (entry) await entry.browser.close();
       this.profiles.delete(profileId);
-      await this.closeEntry(existing);
       await this.dependencies.removeProfileDirectory(
-        this.profileDirectory(profileId),
-        {
-          recursive: true,
-          force: true,
-        },
+        browserProfileDirectory(this.dependencies.profilesRoot(), profileId),
+        { recursive: true, force: true },
       );
+      this.channels.delete(profileId);
     });
   }
-
-  async closeAll(): Promise<void> {
+  async closeAll() {
+    this.stopping = true;
     await Promise.allSettled(this.transitions.values());
-    const entries = [...this.profiles.values()];
-    this.profiles.clear();
-    await Promise.allSettled(entries.map((entry) => this.closeEntry(entry)));
+    await Promise.allSettled(
+      [...this.profiles.values()].map(async (entry) => {
+        await entry.idle;
+        await entry.browser.close();
+      }),
+    );
   }
-
-  private profilesRoot(): string {
-    return this.dependencies.profilesRoot();
-  }
-
-  private profileDirectory(profileId: string): string {
-    return browserProfileDirectory(this.profilesRoot(), profileId);
-  }
-
-  private async closeEntry(entry: ProfileEntry | undefined): Promise<void> {
-    if (!entry) return;
-    await entry.session.close().catch(() => undefined);
-  }
-
   private async withProfileTransition<T>(
     profileId: string,
     operation: () => Promise<T>,
   ): Promise<T> {
     const previous = this.transitions.get(profileId) ?? Promise.resolve();
-    let release: () => void = () => {};
+    let release = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -200,9 +603,68 @@ export class PlaywrightBrowserSessionHost {
       return await operation();
     } finally {
       release();
-      if (this.transitions.get(profileId) === queued) {
+      if (this.transitions.get(profileId) === queued)
         this.transitions.delete(profileId);
-      }
     }
   }
+}
+
+function isolateBrowserDiagnostics(
+  diagnostics: BrowserAutomationDiagnosticTrace | undefined,
+): BrowserAutomationDiagnosticTrace | undefined {
+  if (!diagnostics) return undefined;
+  return {
+    traceId: diagnostics.traceId,
+    bind: (binding) => {
+      try {
+        diagnostics.bind(binding);
+      } catch {
+        // Diagnostics must not affect browser lifecycle.
+      }
+    },
+    report: (event) => {
+      try {
+        diagnostics.report(event);
+      } catch {
+        // Diagnostics must not affect browser lifecycle.
+      }
+    },
+  };
+}
+
+function isolateDiagnostics(
+  diagnostics: PublishAutomationDiagnosticTrace | undefined,
+): PublishAutomationDiagnosticTrace | undefined {
+  if (!diagnostics) return undefined;
+  return {
+    traceId: diagnostics.traceId,
+    bind: (binding) => {
+      try {
+        diagnostics.bind(binding);
+      } catch {
+        // Diagnostics must not affect browser lifecycle.
+      }
+    },
+    report: (event) => {
+      try {
+        diagnostics.report(event);
+      } catch {
+        // Diagnostics must not affect browser lifecycle.
+      }
+    },
+    execution: (phase) => {
+      try {
+        return diagnostics.execution(phase);
+      } catch {
+        return undefined;
+      }
+    },
+    finish: (result) => {
+      try {
+        diagnostics.finish(result);
+      } catch {
+        // Diagnostics must not affect browser lifecycle.
+      }
+    },
+  };
 }

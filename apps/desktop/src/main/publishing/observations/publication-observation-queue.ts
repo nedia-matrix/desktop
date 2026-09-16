@@ -1,11 +1,13 @@
-import type { PublishObservationEvent } from "./publish-observation-manager.js";
-import type { PublicationObservationInbox } from "../infrastructure/electron-publication-observation-inbox.js";
+import type { PublishObservationEvent } from "@nedia-matrix/publishing";
+import { isDeepStrictEqual } from "node:util";
+import type { PublicationObservationInbox } from "./publication-observation-inbox.js";
 
 interface ObservationPersistence {
   recordObservation(
     publicationId: string,
     result: PublishObservationEvent["result"],
     sequence: number,
+    expectedIdentity: { accountId: string; platformId: string },
   ): unknown;
 }
 
@@ -25,6 +27,8 @@ export class PublicationObservationQueue {
     private readonly onPersisted: (event: PublishObservationEvent) => void,
     private readonly onDeferred: (event: PublishObservationEvent) => void,
     private readonly onError: (error: unknown) => void,
+    private readonly commit: (operation: () => void) => void = (operation) =>
+      operation(),
   ) {}
 
   get pendingCount(): number {
@@ -32,6 +36,20 @@ export class PublicationObservationQueue {
   }
 
   accept(event: PublishObservationEvent): Promise<void> {
+    const existing = this.pending.get(event.eventId);
+    if (existing) {
+      if (!isDeepStrictEqual(existing.event, event))
+        return Promise.reject(
+          new Error("Conflicting pending observation event ID"),
+        );
+      return new Promise((resolve) => {
+        const previous = existing.resolve;
+        existing.resolve = () => {
+          previous();
+          resolve();
+        };
+      });
+    }
     return new Promise<void>((resolve) => {
       try {
         this.inbox.append(event);
@@ -57,31 +75,34 @@ export class PublicationObservationQueue {
 
   replayPersisted(): void {
     for (const event of this.inbox.list()) {
-      this.persistence.recordObservation(
-        event.publicationId,
-        event.result,
-        event.sequence,
-      );
-      this.inbox.remove(event.eventId);
+      this.apply(event);
       this.onPersisted(event);
     }
   }
 
   private project(event: PublishObservationEvent): boolean {
     try {
-      this.persistence.recordObservation(
-        event.publicationId,
-        event.result,
-        event.sequence,
-      );
+      this.apply(event);
     } catch (error) {
       this.onError(error);
       return false;
     }
-
-    this.inbox.remove(event.eventId);
     this.onPersisted(event);
     return true;
+  }
+
+  private apply(event: PublishObservationEvent): void {
+    this.commit(() => {
+      this.persistence.recordObservation(
+        event.publicationId,
+        event.result,
+        event.sequence,
+        { accountId: event.accountId, platformId: event.platformId },
+      );
+      // A failed acknowledgement must retry the same sequence: the projection
+      // may already be durable, and recordObservation is sequence-idempotent.
+      this.inbox.remove(event.eventId);
+    });
   }
 
   retryPending(): void {

@@ -5,6 +5,7 @@ export {
   type AutomationFailureDetails,
 } from "./errors.js";
 export {
+  automationPageSchema,
   defineAutomationPage,
   type AutomationPageInput,
 } from "./page-definition.js";
@@ -15,10 +16,11 @@ export {
 } from "./session-detection.js";
 export {
   defineWorkflow,
+  workflowStepSchema,
   type AutomationWorkflowInput,
 } from "./workflow-definition.js";
 export { executeWorkflow } from "./workflow-execution.js";
-export type {
-  WorkflowInput,
-  WorkflowInputs,
-} from "@nedia-matrix/automation-contracts";
+export * from "./automation-trace.js";
+export * from "./driver.js";
+export * from "./session.js";
+export * from "./workflow.js";

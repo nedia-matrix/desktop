@@ -1,6 +1,4 @@
 import type {
-  AccountInfoFieldDefinition,
-  AccountInfoItem,
   AutomationDriver,
   AutomationPage,
   FieldPath,
@@ -9,7 +7,7 @@ import type {
   SessionProbe,
   SessionProbeClient,
   SessionProbeResponse,
-} from "@nedia-matrix/automation-contracts";
+} from "./index.js";
 import { z } from "zod";
 
 import { AutomationDefinitionError } from "./errors.js";
@@ -18,17 +16,6 @@ import { findTargetMatches } from "./target-resolution.js";
 const fieldPathSchema = z
   .array(z.union([z.string().min(1), z.number().int().nonnegative()]))
   .min(1);
-const accountInfoKeySchema = z.enum([
-  "desc",
-  "follower_count",
-  "content_count",
-  "like_count",
-]);
-const accountInfoFieldSchema = z.object({
-  key: accountInfoKeySchema,
-  valuePath: fieldPathSchema,
-  valueType: z.enum(["string", "number"]),
-});
 const sessionProbeSchema = z.object({
   identityScheme: z.string().min(1),
   source: z.discriminatedUnion("kind", [
@@ -45,7 +32,6 @@ const sessionProbeSchema = z.object({
     nickname: fieldPathSchema,
     avatarUrl: fieldPathSchema.optional(),
   }),
-  accountInfo: z.array(accountInfoFieldSchema).optional(),
 });
 const sessionDetectionPlanSchema = z.object({
   probes: z.array(sessionProbeSchema).default([]),
@@ -74,19 +60,6 @@ export function defineSessionDetectionPlan(
     path: readonly (string | number)[];
     message: string;
   }[] = [];
-  for (const [probeIndex, probe] of plan.probes.entries()) {
-    const keys = new Set<string>();
-    for (const [fieldIndex, field] of (probe.accountInfo ?? []).entries()) {
-      if (keys.has(field.key)) {
-        issues.push({
-          code: "INVALID_REFERENCE",
-          path: ["probes", probeIndex, "accountInfo", fieldIndex, "key"],
-          message: `Duplicate account info key: ${field.key}`,
-        });
-      }
-      keys.add(field.key);
-    }
-  }
   const fallback = plan.domFallback;
   if (fallback) {
     for (const [name, targetId] of [
@@ -127,17 +100,6 @@ function scalarString(value: unknown): string | null {
   return null;
 }
 
-function accountInfoValue(
-  value: unknown,
-  definition: AccountInfoFieldDefinition,
-): string | number | null {
-  if (definition.valueType === "string") return scalarString(value);
-  let number = Number.NaN;
-  if (typeof value === "number") number = value;
-  if (typeof value === "string" && value.trim()) number = Number(value);
-  return Number.isFinite(number) && number >= 0 ? number : null;
-}
-
 function authenticatedDetection(
   body: unknown,
   probe: SessionProbe,
@@ -148,15 +110,6 @@ function authenticatedDetection(
   );
   const nickname = scalarString(valueAtPath(body, probe.fields.nickname));
   if (!externalAccountId || !nickname) return null;
-  const accountInfo: AccountInfoItem[] = (probe.accountInfo ?? []).flatMap(
-    (definition) => {
-      const value = accountInfoValue(
-        valueAtPath(body, definition.valuePath),
-        definition,
-      );
-      return value === null ? [] : [{ key: definition.key, value }];
-    },
-  );
   return {
     status: "authenticated",
     identityScheme: probe.identityScheme,
@@ -165,7 +118,6 @@ function authenticatedDetection(
     avatarUrl: probe.fields.avatarUrl
       ? scalarString(valueAtPath(body, probe.fields.avatarUrl))
       : null,
-    accountInfo,
     source,
   };
 }
@@ -246,7 +198,6 @@ export async function detectPlatformSession(
         externalAccountId,
         nickname,
         avatarUrl: null,
-        accountInfo: [],
         source: "dom",
       };
     }

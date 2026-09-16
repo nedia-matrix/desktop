@@ -1,13 +1,11 @@
 import type {
   PublishResultEvent,
   PublishResultMonitor,
-} from "@nedia-matrix/platform-core";
+} from "@nedia-matrix/platform-sdk";
+import { toPublishResultUpdate } from "@nedia-matrix/publishing";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  PublishObservationManager,
-  toPublishResultUpdate,
-} from "../src/main/publishing/observations/publish-observation-manager.js";
+import { PublishObservationManager } from "../src/main/publishing/observations/publish-observation-manager.js";
 
 function fakeMonitor() {
   const listeners = new Set<(event: PublishResultEvent) => void>();
@@ -164,6 +162,41 @@ describe("PublishObservationManager", () => {
 
     acknowledge();
     await vi.waitFor(() => expect(onFinished).toHaveBeenCalledOnce());
+  });
+
+  it("finishes diagnostics only after a terminal result is durable", async () => {
+    let acknowledge = (): void => undefined;
+    const persistence = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const finish = vi.fn();
+    const report = vi.fn();
+    const host = new PublishObservationManager(() => persistence);
+    const fake = fakeMonitor();
+    host.attach({
+      publicationId: "publication-1",
+      accountId: "a",
+      platformId: "p",
+      monitor: fake.monitor,
+      diagnostics: {
+        traceId: "trace-1",
+        bind: vi.fn(),
+        report,
+        execution: vi.fn(),
+        finish,
+      },
+    });
+
+    fake.emit({ kind: "failed", message: "rejected" });
+    await Promise.resolve();
+    expect(finish).not.toHaveBeenCalled();
+
+    acknowledge();
+    await vi.waitFor(() => expect(finish).toHaveBeenCalledOnce());
+    expect(finish).toHaveBeenCalledWith({ outcome: "failed" });
+    expect(report).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "monitor.result_persisted" }),
+    );
   });
 
   it("maps platform results to renderer updates at the host boundary", () => {

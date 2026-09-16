@@ -1,15 +1,18 @@
-import { ipcChannels } from "@nedia-matrix/ipc-contracts";
+import { ipcChannels } from "../../../bridge/channels.js";
 import { ipcMain } from "electron";
 
-import type { DesktopUseCases } from "../../application/desktop-application.js";
+import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
 
-type AccountIpcApplication = Pick<DesktopUseCases, "accounts">;
+type AccountIpcApplication = Pick<
+  NediaMatrixUseCases,
+  "accounts" | "platformSummaries"
+>;
 
 export function registerAccountIpcHandlers(
   application: AccountIpcApplication,
 ): void {
   ipcMain.handle(ipcChannels.listPlatforms, () =>
-    application.accounts.listPlatforms(),
+    application.platformSummaries(),
   );
   ipcMain.handle(ipcChannels.listPlatformAccounts, () =>
     application.accounts.list(),
@@ -25,6 +28,9 @@ export function registerAccountIpcHandlers(
   );
   ipcMain.handle(ipcChannels.refreshPlatformAccount, (_event, request) =>
     application.accounts.refresh(request),
+  );
+  ipcMain.handle(ipcChannels.refreshPlatformAccountProfile, (_event, request) =>
+    application.accounts.refreshProfile(request),
   );
   ipcMain.handle(ipcChannels.removePlatformAccount, (_event, request) =>
     application.accounts.remove(request),

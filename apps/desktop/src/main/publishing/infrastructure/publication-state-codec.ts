@@ -1,15 +1,11 @@
-import type {
-  PublicationRecord,
-  PublicationRepository,
-} from "@nedia-matrix/application-publishing";
-import { publicationStates } from "@nedia-matrix/domain-core";
-import type { PublicationState } from "@nedia-matrix/domain-core";
-import type { PublicationSummary } from "@nedia-matrix/ipc-contracts";
-type PublicationStoreSchema = {
-  schemaVersion?: unknown;
-  publications?: unknown;
-};
-
+import type { PublicationSnapshot } from "@nedia-matrix/publishing";
+import {
+  publicationAssetRoles,
+  publicationStates,
+  publicationSubmissionModes,
+  submissionEvidences,
+} from "@nedia-matrix/publishing";
+import type { PublicationState } from "@nedia-matrix/publishing";
 export const publicationStoreSchemaVersion = 5;
 
 function normalizePublicationState(value: unknown): PublicationState | null {
@@ -23,12 +19,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeAsset(
   value: Record<string, unknown>,
-  contentForm: PublicationRecord["contentForm"],
+  contentForm: PublicationSnapshot["contentForm"],
   order: number,
-): PublicationRecord["assets"][number] {
-  const role = ["image", "video", "cover", "inline_image"].find(
+): PublicationSnapshot["assets"][number] | null {
+  const role = publicationAssetRoles.find(
     (candidate) => candidate === value.role,
-  ) as PublicationRecord["assets"][number]["role"] | undefined;
+  );
+  if (
+    (value.role !== undefined && role === undefined) ||
+    (value.order !== undefined && typeof value.order !== "number")
+  ) {
+    return null;
+  }
+  for (const key of [
+    "mediaType",
+    "hash",
+    "downloadedAt",
+    "sourceAssetId",
+    "sourceOrigin",
+    "localRelativePath",
+  ] as const) {
+    if (
+      value[key] !== undefined &&
+      value[key] !== null &&
+      typeof value[key] !== "string"
+    ) {
+      return null;
+    }
+  }
   return {
     id: value.id as string,
     name: value.name as string,
@@ -50,7 +68,7 @@ function normalizeAsset(
   };
 }
 
-function parsePublicationRecord(value: unknown): PublicationRecord | null {
+function parsePublicationSnapshot(value: unknown): PublicationSnapshot | null {
   if (!isRecord(value) || !isRecord(value.publication)) return null;
   const publication = value.publication;
   const contentRevision = value.contentRevision;
@@ -102,15 +120,48 @@ function parsePublicationRecord(value: unknown): PublicationRecord | null {
   ) {
     return null;
   }
-  const contentForm = value.contentForm as PublicationRecord["contentForm"];
+  const contentForm = value.contentForm as PublicationSnapshot["contentForm"];
+  const tags = value.tags === undefined ? [] : value.tags;
+  const submissionMode =
+    value.submissionMode === undefined
+      ? "legacy_unknown"
+      : publicationSubmissionModes.find(
+          (candidate) => candidate === value.submissionMode,
+        );
+  const submissionEvidence =
+    value.submissionEvidence === undefined
+      ? "legacy_unknown"
+      : submissionEvidences.find(
+          (candidate) => candidate === value.submissionEvidence,
+        );
+  const lastObservationSequence =
+    value.lastObservationSequence === undefined
+      ? 0
+      : value.lastObservationSequence;
+  const retained = value.retained === undefined ? false : value.retained;
+  const normalizedAssets = assets.map((asset, order) =>
+    normalizeAsset(asset as Record<string, unknown>, contentForm, order),
+  );
+  if (
+    !Array.isArray(tags) ||
+    !tags.every((tag) => typeof tag === "string") ||
+    submissionMode === undefined ||
+    submissionEvidence === undefined ||
+    !Number.isSafeInteger(lastObservationSequence) ||
+    Number(lastObservationSequence) < 0 ||
+    typeof retained !== "boolean" ||
+    normalizedAssets.some((asset) => asset === null)
+  ) {
+    return null;
+  }
   return {
-    ...(value as unknown as PublicationRecord),
+    ...(value as unknown as PublicationSnapshot),
     requestId:
       typeof value.requestId === "string"
         ? value.requestId
         : `legacy:${String(publication.id)}`,
     publication: {
-      ...(publication as unknown as PublicationRecord["publication"]),
+      ...(publication as unknown as PublicationSnapshot["publication"]),
       state: normalizePublicationState(publication.state)!,
       transitions: transitions.map((transition) => {
         const stored = transition as Record<string, unknown>;
@@ -124,40 +175,20 @@ function parsePublicationRecord(value: unknown): PublicationRecord | null {
         };
       }),
     },
-    tags: Array.isArray(value.tags)
-      ? value.tags.filter((tag): tag is string => typeof tag === "string")
-      : [],
-    submissionMode:
-      value.submissionMode === "automatic" ||
-      value.submissionMode === "manual_confirmation"
-        ? value.submissionMode
-        : "legacy_unknown",
-    submissionEvidence:
-      value.submissionEvidence === "none" ||
-      value.submissionEvidence === "submission_attempted" ||
-      value.submissionEvidence === "verification_observed" ||
-      value.submissionEvidence === "accepted" ||
-      value.submissionEvidence === "legacy_unknown"
-        ? value.submissionEvidence
-        : "legacy_unknown",
-    lastObservationSequence:
-      typeof value.lastObservationSequence === "number" &&
-      Number.isSafeInteger(value.lastObservationSequence) &&
-      value.lastObservationSequence >= 0
-        ? value.lastObservationSequence
-        : 0,
-    retained: value.retained === true,
-    assets: assets.map((asset, order) =>
-      normalizeAsset(asset as Record<string, unknown>, contentForm, order),
-    ),
+    tags,
+    submissionMode,
+    submissionEvidence,
+    lastObservationSequence: Number(lastObservationSequence),
+    retained,
+    assets: normalizedAssets as PublicationSnapshot["assets"],
   };
 }
 
-export function parseStoredPublications(value: unknown): PublicationRecord[] {
+export function parseStoredPublications(value: unknown): PublicationSnapshot[] {
   if (!Array.isArray(value)) return [];
   return value
-    .map(parsePublicationRecord)
-    .filter((record): record is PublicationRecord => record !== null);
+    .map(parsePublicationSnapshot)
+    .filter((record): record is PublicationSnapshot => record !== null);
 }
 
 export function assertSupportedPublicationStoreVersion(value: unknown): void {
@@ -177,12 +208,12 @@ export function assertSupportedPublicationStoreVersion(value: unknown): void {
 
 export function mergeStoredPublication(
   value: unknown,
-  record: PublicationRecord,
+  record: PublicationSnapshot,
 ): unknown[] {
   const stored = Array.isArray(value) ? [...value] : [];
   const index = stored.findIndex(
     (candidate) =>
-      parsePublicationRecord(candidate)?.publication.id ===
+      parsePublicationSnapshot(candidate)?.publication.id ===
       record.publication.id,
   );
   if (index === -1) stored.push(record);
@@ -197,34 +228,6 @@ export function removeStoredPublication(
   if (!Array.isArray(value)) return [];
   return value.filter(
     (candidate) =>
-      parsePublicationRecord(candidate)?.publication.id !== publicationId,
+      parsePublicationSnapshot(candidate)?.publication.id !== publicationId,
   );
-}
-
-export function toPublicationSummary(
-  record: PublicationRecord,
-): PublicationSummary {
-  const { publication, contentRevision } = record;
-  return {
-    id: publication.id,
-    requestId: record.requestId,
-    platformId: publication.platformId,
-    accountId: publication.accountId,
-    contentForm: record.contentForm,
-    title: contentRevision.title ?? null,
-    body: contentRevision.body,
-    assets: record.assets.map(({ name, size }) => ({ name, size })),
-    state: publication.state,
-    transitions: publication.transitions.map((transition) => ({
-      ...transition,
-      reason: transition.reason ?? null,
-    })),
-    rulesVersion: record.rulesVersion,
-    retained: record.retained,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    lastMessage: record.lastMessage ?? null,
-    platformContentId: publication.platformContentId ?? null,
-    platformContentUrl: publication.platformContentUrl ?? null,
-  };
 }

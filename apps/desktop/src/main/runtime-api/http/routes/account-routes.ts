@@ -1,12 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { DesktopUseCases } from "../../../application/desktop-application.js";
-import { AccountReplacedError } from "../../../accounts/public.js";
+import type { NediaMatrixUseCases } from "../../../application/nedia-matrix-application.js";
+import { AccountReplacedError } from "@nedia-matrix/account-management";
 import { toRuntimeAccountSession } from "../../mapping/runtime-account-mapper.js";
 import { readJsonRequest, writeJson } from "../http-json.js";
 
 export class RuntimeAccountRoutes {
-  constructor(private readonly application: DesktopUseCases) {}
+  constructor(private readonly application: NediaMatrixUseCases) {}
 
   list(response: ServerResponse): void {
     writeJson(
@@ -44,8 +44,8 @@ export class RuntimeAccountRoutes {
       });
       const account = resolved.account;
       if (account.status === "login_required") {
-        const platform = this.application.accounts
-          .listPlatforms()
+        const platform = this.application
+          .platformSummaries()
           .find((candidate) => candidate.id === account.platformId);
         const requestedLoginEntryId =
           typeof body.loginEntryId === "string" ? body.loginEntryId : null;

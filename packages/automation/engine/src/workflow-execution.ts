@@ -5,12 +5,57 @@ import type {
   WorkflowExecutionHooks,
   WorkflowInputs,
   WorkflowStep,
-} from "@nedia-matrix/automation-contracts";
+  TargetResolutionSummary,
+  AutomationTraceEvent,
+} from "./index.js";
+import { summarizeWorkflowInputs } from "./automation-trace.js";
 
 import { waitForCondition } from "./condition-evaluation.js";
 import { AutomationError, type AutomationFailureDetails } from "./errors.js";
 import { findTargetMatches, resolveTarget } from "./target-resolution.js";
 import { validateWorkflowInputs } from "./workflow-definition.js";
+
+interface StepExecutionResult {
+  readonly outcome?: "absent";
+}
+
+function reportTrace(
+  hooks: WorkflowExecutionHooks,
+  event: AutomationTraceEvent,
+): void {
+  try {
+    hooks.trace?.report(event);
+  } catch {
+    // Diagnostic output must not affect workflow execution.
+  }
+}
+
+function elapsed(startedAt: number, now: () => number): number {
+  return Math.max(0, now() - startedAt);
+}
+
+function errorCode(error: unknown): AutomationFailureDetails["code"] {
+  return error instanceof AutomationError
+    ? error.details.code
+    : "ACTION_FAILED";
+}
+
+function reportResolution(
+  hooks: WorkflowExecutionHooks,
+  workflowId: string,
+  stepIndex: number,
+  summary: TargetResolutionSummary,
+): void {
+  reportTrace(hooks, {
+    type:
+      summary.outcome === "resolved"
+        ? "target.resolved"
+        : "target.resolve_failed",
+    workflowId,
+    stepIndex,
+    summary,
+  });
+}
 
 function wait(
   driver: AutomationDriver,
@@ -54,12 +99,15 @@ async function executeAppendTags(
   step: Extract<WorkflowStep, { kind: "append-tags" }>,
   driver: AutomationDriver,
   inputs: WorkflowInputs,
+  resolve: (
+    targetId: string,
+  ) => Promise<Awaited<ReturnType<typeof resolveTarget>>>,
 ): Promise<void> {
   const tags = stringListInput(inputs, step.inputKey);
   const body = stringInput(inputs, step.bodyInputKey);
   if (tags.length === 0) return;
 
-  const target = await resolveTarget(driver, page, step.targetId);
+  const target = await resolve(step.targetId);
   if (body.length > 0) await driver.pressKey(target, step.leadingKey);
   for (const [index, tag] of tags.entries()) {
     await driver.typeText(target, `#${tag}`, step.typingDelayMs);
@@ -80,46 +128,103 @@ async function executeStep(
   hooks: WorkflowExecutionHooks,
   stepIndex: number,
   workflowId: string,
-): Promise<void> {
+): Promise<StepExecutionResult> {
+  const now = hooks.monotonicNow ?? (() => Date.now());
+  const resolve = (targetId: string) =>
+    resolveTarget(
+      driver,
+      page,
+      targetId,
+      (summary) => reportResolution(hooks, workflowId, stepIndex, summary),
+      now,
+    );
   switch (step.kind) {
     case "click": {
-      const target = await resolveTarget(driver, page, step.targetId);
+      const target = await resolve(step.targetId);
       if (step.commitBoundary) {
+        reportTrace(hooks, {
+          type: "commit.boundary_reached",
+          workflowId,
+          stepIndex,
+          boundary: step.commitBoundary,
+        });
         await hooks.beforeCommit?.({
+          workflowId,
+          stepIndex,
+          boundary: step.commitBoundary,
+        });
+        reportTrace(hooks, {
+          type: "commit.authorization_completed",
           workflowId,
           stepIndex,
           boundary: step.commitBoundary,
         });
       }
       await driver.click(target);
-      return;
+      return {};
     }
     case "click-position": {
-      const target = await resolveTarget(driver, page, step.targetId);
+      const target = await resolve(step.targetId);
       if (step.commitBoundary) {
+        reportTrace(hooks, {
+          type: "commit.boundary_reached",
+          workflowId,
+          stepIndex,
+          boundary: step.commitBoundary,
+        });
         await hooks.beforeCommit?.({
+          workflowId,
+          stepIndex,
+          boundary: step.commitBoundary,
+        });
+        reportTrace(hooks, {
+          type: "commit.authorization_completed",
           workflowId,
           stepIndex,
           boundary: step.commitBoundary,
         });
       }
       await driver.clickAtPosition(target, step.xRatio, step.yRatio);
-      return;
+      return {};
     }
     case "click-if-present": {
       const deadline = Date.now() + step.timeoutMs;
+      let lastResolution: TargetResolutionSummary | undefined;
       do {
         try {
-          const target = await resolveTarget(driver, page, step.targetId);
+          const target = await resolveTarget(
+            driver,
+            page,
+            step.targetId,
+            (summary) => {
+              lastResolution = summary;
+            },
+            now,
+          );
+          if (lastResolution) {
+            reportResolution(hooks, workflowId, stepIndex, lastResolution);
+          }
           if (step.commitBoundary) {
+            reportTrace(hooks, {
+              type: "commit.boundary_reached",
+              workflowId,
+              stepIndex,
+              boundary: step.commitBoundary,
+            });
             await hooks.beforeCommit?.({
+              workflowId,
+              stepIndex,
+              boundary: step.commitBoundary,
+            });
+            reportTrace(hooks, {
+              type: "commit.authorization_completed",
               workflowId,
               stepIndex,
               boundary: step.commitBoundary,
             });
           }
           await driver.click(target);
-          return;
+          return {};
         } catch (error) {
           if (
             !(error instanceof AutomationError) ||
@@ -130,36 +235,39 @@ async function executeStep(
         }
         await driver.wait(100);
       } while (Date.now() < deadline);
-      return;
+      if (lastResolution) {
+        reportResolution(hooks, workflowId, stepIndex, lastResolution);
+      }
+      return { outcome: "absent" };
     }
     case "click-closed-shadow":
       await driver.clickClosedShadowDescendant(
-        await resolveTarget(driver, page, step.targetId),
+        await resolve(step.targetId),
         step.descendantTag,
         step.descendantClass,
       );
-      return;
+      return {};
     case "fill":
       await driver.fill(
-        await resolveTarget(driver, page, step.targetId),
+        await resolve(step.targetId),
         stringInput(inputs, step.inputKey),
       );
-      return;
+      return {};
     case "upload":
       await driver.uploadFiles(
-        await resolveTarget(driver, page, step.targetId),
+        await resolve(step.targetId),
         stringListInput(inputs, step.inputKey),
       );
-      return;
+      return {};
     case "drop-files":
       await driver.dropFiles(
-        await resolveTarget(driver, page, step.targetId),
+        await resolve(step.targetId),
         stringListInput(inputs, step.inputKey),
       );
-      return;
+      return {};
     case "append-tags":
-      await executeAppendTags(page, step, driver, inputs);
-      return;
+      await executeAppendTags(page, step, driver, inputs, resolve);
+      return {};
     case "wait-for-state": {
       const condition = page.states[step.stateId];
       if (
@@ -175,17 +283,36 @@ async function executeStep(
           stateId: step.stateId,
         });
       }
-      return;
+      return {};
     }
     case "wait-for-target-count": {
       const expectedItems = stringListInput(inputs, step.inputKey);
       const deadline = Date.now() + step.timeoutMs;
       let count = 0;
+      let lastResolution: TargetResolutionSummary | undefined;
       do {
-        count = (await findTargetMatches(driver, page, step.targetId)).length;
-        if (count >= expectedItems.length) return;
+        count = (
+          await findTargetMatches(
+            driver,
+            page,
+            step.targetId,
+            (summary) => {
+              lastResolution = summary;
+            },
+            now,
+          )
+        ).length;
+        if (count >= expectedItems.length) {
+          if (lastResolution) {
+            reportResolution(hooks, workflowId, stepIndex, lastResolution);
+          }
+          return {};
+        }
         await wait(driver, 100);
       } while (Date.now() < deadline);
+      if (lastResolution) {
+        reportResolution(hooks, workflowId, stepIndex, lastResolution);
+      }
       throw new AutomationError({
         code: "STATE_NOT_FOUND",
         message: `Timed out waiting for ${expectedItems.length} matches of ${step.targetId}; found ${count}`,
@@ -262,13 +389,25 @@ async function createWorkflowFailure(
   activeAction: ActiveAction | undefined,
   driver: AutomationDriver,
   error: unknown,
+  hooks: WorkflowExecutionHooks,
 ): Promise<AutomationError> {
   const failure = new AutomationError(
     failureDetails(workflow, activeAction, error),
   );
   try {
     failure.details.evidence = await driver.captureEvidence(failure.message);
-  } catch {
+    reportTrace(hooks, {
+      type: "evidence.captured",
+      workflowId: workflow.id,
+      evidenceId: failure.details.evidence.id,
+    });
+  } catch (evidenceError) {
+    reportTrace(hooks, {
+      type: "evidence.capture_failed",
+      workflowId: workflow.id,
+      errorName:
+        evidenceError instanceof Error ? evidenceError.name : "UnknownError",
+    });
     // Evidence collection must not hide the original automation failure.
   }
   return failure;
@@ -281,31 +420,102 @@ export async function executeWorkflow(
   hooks: WorkflowExecutionHooks = {},
 ): Promise<void> {
   let activeAction: ActiveAction | undefined;
+  const now = hooks.monotonicNow ?? (() => Date.now());
+  const workflowStartedAt = now();
+  reportTrace(hooks, {
+    type: "workflow.started",
+    workflowId: workflow.id,
+    pageDefinitionId: workflow.page.id,
+    stepCount: workflow.steps.length,
+    inputs: summarizeWorkflowInputs(inputs),
+  });
   try {
     validateWorkflowInputs(workflow, inputs);
     if (workflow.startUrl) {
       activeAction = { kind: "navigate" };
+      const navigationStartedAt = now();
+      reportTrace(hooks, {
+        type: "navigation.started",
+        workflowId: workflow.id,
+        url: workflow.startUrl,
+      });
       await driver.navigate(workflow.startUrl);
+      reportTrace(hooks, {
+        type: "navigation.completed",
+        workflowId: workflow.id,
+        url: workflow.startUrl,
+        durationMs: elapsed(navigationStartedAt, now),
+      });
     }
     for (const [index, step] of workflow.steps.entries()) {
       activeAction = activeActionFor(index, step);
-      await executeStep(
-        workflow.page,
-        step,
-        driver,
-        inputs,
-        hooks,
-        index,
-        workflow.id,
-      );
+      const activeStepStartedAt = now();
+      const stepFields = {
+        workflowId: workflow.id,
+        stepIndex: index,
+        stepKind: step.kind,
+        ...(activeAction.targetId ? { targetId: activeAction.targetId } : {}),
+        ...(activeAction.stateId ? { stateId: activeAction.stateId } : {}),
+      };
+      reportTrace(hooks, { type: "step.started", ...stepFields });
+      try {
+        const result = await executeStep(
+          workflow.page,
+          step,
+          driver,
+          inputs,
+          hooks,
+          index,
+          workflow.id,
+        );
+        reportTrace(hooks, {
+          type: "step.completed",
+          ...stepFields,
+          durationMs: elapsed(activeStepStartedAt, now),
+          ...(result.outcome ? { outcome: result.outcome } : {}),
+        });
+      } catch (error) {
+        reportTrace(hooks, {
+          type: "step.failed",
+          ...stepFields,
+          durationMs: elapsed(activeStepStartedAt, now),
+          code: errorCode(error),
+        });
+        throw error;
+      }
     }
+    reportTrace(hooks, {
+      type: "workflow.completed",
+      workflowId: workflow.id,
+      durationMs: elapsed(workflowStartedAt, now),
+    });
   } catch (error) {
     const failure = await createWorkflowFailure(
       workflow,
       activeAction,
       driver,
       error,
+      hooks,
     );
+    reportTrace(hooks, {
+      type: "workflow.failed",
+      workflowId: workflow.id,
+      pageDefinitionId: workflow.page.id,
+      durationMs: elapsed(workflowStartedAt, now),
+      code: failure.details.code,
+      message: failure.message,
+      ...(failure.details.stepIndex === undefined
+        ? {}
+        : { stepIndex: failure.details.stepIndex }),
+      ...(activeAction?.kind ? { stepKind: activeAction.kind } : {}),
+      ...(failure.details.targetId
+        ? { targetId: failure.details.targetId }
+        : {}),
+      ...(failure.details.stateId ? { stateId: failure.details.stateId } : {}),
+      ...(failure.details.evidence?.id
+        ? { evidenceId: failure.details.evidence.id }
+        : {}),
+    });
     throw failure;
   }
 }

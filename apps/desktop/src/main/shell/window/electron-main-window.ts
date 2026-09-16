@@ -1,10 +1,8 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  ipcChannels,
-  type PublishResultUpdate,
-} from "@nedia-matrix/ipc-contracts";
+import { ipcChannels } from "../../../bridge/channels.js";
+import type { PublishResultUpdate } from "@nedia-matrix/publishing";
 import { BrowserWindow } from "electron";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));

@@ -2,7 +2,7 @@ import type {
   ObservedHttpRequest,
   ObservedHttpResponse,
   PublishObservationSession,
-} from "@nedia-matrix/platform-core";
+} from "@nedia-matrix/platform-sdk";
 import type { BrowserContext, CDPSession, Page } from "playwright";
 
 const MAX_OBSERVED_RESPONSE_BYTES = 2_000_000;
@@ -78,7 +78,7 @@ function createObservedBodyTracker(
 export async function createPlaywrightPublishObservationSession(
   context: BrowserContext,
   page: Page,
-): Promise<PublishObservationSession> {
+): Promise<PublishObservationSession & { dispose(): Promise<void> }> {
   const cdp = await context.newCDPSession(page);
   await cdp.send("Network.enable");
   const requestMethods = new Map<string, string>();
@@ -99,7 +99,21 @@ export async function createPlaywrightPublishObservationSession(
     responseBodies.delete(requestId);
     requestMethods.delete(requestId);
   });
+  const failPendingBodies = () => {
+    for (const tracker of responseBodies.values()) tracker.fail();
+    responseBodies.clear();
+    requestMethods.clear();
+  };
+  page.once("close", failPendingBodies);
+  let disposed = false;
   return {
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      page.off("close", failPendingBodies);
+      failPendingBodies();
+      await cdp.detach();
+    },
     requests: {
       subscribe(listener) {
         const handleRequest = ({

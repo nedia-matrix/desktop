@@ -75,7 +75,7 @@ describe("RemoteAssetDownloader", () => {
     expect(downloaded?.localRelativePath).toMatch(
       /^sha256\/[a-f0-9]{2}\/[a-f0-9]{64}\.png$/,
     );
-    await expect(readFile(downloaded!.filePath)).resolves.toEqual(png);
+    await expect(readFile(downloaded!.resourceReference)).resolves.toEqual(png);
     await expect(assetStore.list()).resolves.toEqual([
       {
         relativePath: downloaded!.localRelativePath,
@@ -93,7 +93,7 @@ describe("RemoteAssetDownloader", () => {
     const [first] = await downloader.download("request-1", [image()]);
     const [second] = await downloader.download("request-2", [image()]);
 
-    expect(second?.filePath).toBe(first?.filePath);
+    expect(second?.resourceReference).toBe(first?.resourceReference);
     expect(second?.created).toBe(false);
     const files = await readdir(join(root, "assets"), { recursive: true });
     expect(files.filter((entry) => entry.endsWith(".png"))).toHaveLength(1);

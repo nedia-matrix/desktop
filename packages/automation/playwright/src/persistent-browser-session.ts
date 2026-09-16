@@ -2,11 +2,11 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
-import type { SessionDetectionPlan } from "@nedia-matrix/automation-contracts";
+import type { SessionDetectionPlan } from "@nedia-matrix/automation-engine";
 import type {
   PlatformBrowserPolicy,
   PublishObservationSession,
-} from "@nedia-matrix/platform-core";
+} from "@nedia-matrix/platform-sdk";
 import { chromium, type BrowserContext, type Page } from "playwright";
 
 import { PlaywrightAutomationDriver } from "./automation-driver.js";
@@ -23,6 +23,8 @@ export interface OpenPersistentBrowserSessionOptions {
   profileDirectory: string;
   profileId: string;
   evidenceDirectory: string;
+  headless?: boolean;
+  preferredChannel?: string;
 }
 
 export interface OpenedPersistentBrowserSession {
@@ -56,24 +58,34 @@ export function browserLaunchCandidates(): BrowserLaunchCandidate[] {
 
 async function launchPersistentBrowser(
   profileDirectory: string,
-): Promise<BrowserContext> {
+  headless = false,
+  preferredChannel?: string,
+): Promise<{ context: BrowserContext; channel: string }> {
   const failures: string[] = [];
   const sharedOptions: PersistentBrowserOptions = {
-    headless: false,
+    headless,
     chromiumSandbox: true,
-    viewport: null,
+    viewport: {
+      width: 1920,
+      height: 992,
+    },
     acceptDownloads: true,
     handleSIGINT: false,
     handleSIGTERM: false,
     handleSIGHUP: false,
   };
 
-  for (const candidate of browserLaunchCandidates()) {
+  const candidates = browserLaunchCandidates();
+  const selected = preferredChannel
+    ? candidates.filter((candidate) => candidate.name === preferredChannel)
+    : candidates;
+  for (const candidate of selected) {
     try {
-      return await chromium.launchPersistentContext(profileDirectory, {
+      const context = await chromium.launchPersistentContext(profileDirectory, {
         ...sharedOptions,
         ...candidate.options,
       });
+      return { context, channel: candidate.name };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       failures.push(`${candidate.name}: ${detail}`);
@@ -85,27 +97,11 @@ async function launchPersistentBrowser(
   );
 }
 
+/** Legacy single-page adapter; Desktop uses the context and managed-page APIs. */
 export async function openPersistentBrowserSession(
   options: OpenPersistentBrowserSessionOptions,
 ): Promise<OpenedPersistentBrowserSession> {
-  if (!isAbsolute(options.profileDirectory)) {
-    throw new TypeError("Browser profile directory must be an absolute path");
-  }
-  await mkdir(options.profileDirectory, { recursive: true });
-
-  let context: BrowserContext;
-  try {
-    context = await launchPersistentBrowser(options.profileDirectory);
-    await context.addInitScript(`
-      Object.defineProperty(Navigator.prototype, "webdriver", {
-        configurable: true,
-        get: () => false,
-      });
-    `);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Unable to start the browser. ${detail}`);
-  }
+  const { context } = await openPersistentBrowserContext(options);
 
   try {
     const existingPage = context
@@ -153,6 +149,42 @@ export async function openPersistentBrowserSession(
     };
   } catch (error) {
     await context.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+export interface OpenedBrowserContext {
+  context: BrowserContext;
+  channel: string;
+  headless: boolean;
+  close(): Promise<void>;
+}
+
+/** Opens the original account profile without assigning any page a business role. */
+export async function openPersistentBrowserContext(
+  options: OpenPersistentBrowserSessionOptions,
+): Promise<OpenedBrowserContext> {
+  if (!isAbsolute(options.profileDirectory)) {
+    throw new TypeError("Browser profile directory must be an absolute path");
+  }
+  await mkdir(options.profileDirectory, { recursive: true });
+  const { context, channel } = await launchPersistentBrowser(
+    options.profileDirectory,
+    options.headless,
+    options.preferredChannel,
+  );
+  try {
+    await context.addInitScript(`Object.defineProperty(Navigator.prototype, "webdriver", {
+      configurable: true, get: () => false,
+    });`);
+    return {
+      context,
+      channel,
+      headless: options.headless ?? false,
+      close: () => context.close(),
+    };
+  } catch (error) {
+    await context.close();
     throw error;
   }
 }

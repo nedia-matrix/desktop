@@ -1,6 +1,7 @@
 import type { AppContext } from "../app-context.js";
 import { Icon } from "../components/icons.js";
 import type { ResolvedTheme, ThemePreference } from "../theme.js";
+import { useState } from "preact/hooks";
 
 export interface RuntimeSummary {
   version: string | null;
@@ -9,8 +10,13 @@ export interface RuntimeSummary {
   port: number | null;
 }
 
+export interface UpdateCheckFeedback {
+  message: string;
+  error: boolean;
+}
+
 export function SettingsPage({
-  context: _context,
+  context,
   themePreference = "system",
   resolvedTheme = "light",
   onThemePreferenceChange = () => undefined,
@@ -18,6 +24,14 @@ export function SettingsPage({
   runtimeActionPending = false,
   runtimeError = null,
   onRuntimeRunningChange = () => undefined,
+  updateCheckPending = false,
+  updateCheckCompleted = false,
+  updateCheckFeedback = null,
+  availableUpdateVersion = null,
+  currentApplicationVersion = null,
+  updateDownloadPending = false,
+  onCheckForApplicationUpdate = () => undefined,
+  onOpenApplicationUpdateDownload = () => undefined,
 }: {
   context: AppContext;
   themePreference?: ThemePreference;
@@ -27,14 +41,26 @@ export function SettingsPage({
   runtimeActionPending?: boolean;
   runtimeError?: string | null;
   onRuntimeRunningChange?: (running: boolean) => void | Promise<void>;
+  updateCheckPending?: boolean;
+  updateCheckCompleted?: boolean;
+  updateCheckFeedback?: UpdateCheckFeedback | null;
+  availableUpdateVersion?: string | null;
+  currentApplicationVersion?: string | null;
+  updateDownloadPending?: boolean;
+  onCheckForApplicationUpdate?: () => void | Promise<void>;
+  onOpenApplicationUpdateDownload?: (version: string) => void | Promise<void>;
 }) {
   return (
     <div class="settings-layout">
-      <RuntimeSettings
-        runtime={runtime}
-        actionPending={runtimeActionPending}
-        error={runtimeError}
-        onRunningChange={onRuntimeRunningChange}
+      <ApplicationUpdateSettings
+        currentVersion={currentApplicationVersion ?? runtime.version}
+        checkPending={updateCheckPending}
+        checkCompleted={updateCheckCompleted}
+        feedback={updateCheckFeedback}
+        availableVersion={availableUpdateVersion}
+        downloadPending={updateDownloadPending}
+        onCheck={onCheckForApplicationUpdate}
+        onDownload={onOpenApplicationUpdateDownload}
       />
 
       <section class="settings-surface" aria-labelledby="appearance-title">
@@ -72,29 +98,127 @@ export function SettingsPage({
         </div>
       </section>
 
-      <section class="settings-surface" aria-labelledby="application-title">
-        <header class="settings-section-header">
-          <div>
-            <h2 id="application-title">应用</h2>
-            <p>桌面端运行和数据存储说明。</p>
-          </div>
-        </header>
-        <dl class="settings-list">
-          <div>
-            <dt>本地数据</dt>
-            <dd>账号 Session、发布档案和设置均保存在本机。</dd>
-          </div>
-          <div>
-            <dt>平台窗口</dt>
-            <dd>登录和发布操作使用隔离的持久化浏览器窗口。</dd>
-          </div>
-          <div>
-            <dt>主题偏好</dt>
-            <dd>只保存在当前设备，不会同步到平台账号。</dd>
-          </div>
-        </dl>
-      </section>
+      <RuntimeSettings
+        runtime={runtime}
+        actionPending={runtimeActionPending}
+        error={runtimeError}
+        onRunningChange={onRuntimeRunningChange}
+      />
+
+      <AutomationDiagnosticSettings context={context} />
     </div>
+  );
+}
+
+function AutomationDiagnosticSettings({ context }: { context: AppContext }) {
+  const [opening, setOpening] = useState(false);
+
+  return (
+    <section class="settings-surface" aria-labelledby="diagnostics-title">
+      <header class="settings-section-header">
+        <div>
+          <h2 id="diagnostics-title">自动化诊断</h2>
+          <p>记录发布和平台作品同步的步骤、耗时、结果及失败截图引用。</p>
+        </div>
+      </header>
+      <div class="runtime-settings-row">
+        <div class="runtime-settings-status">
+          <span>
+            <strong>本地诊断日志</strong>
+            <small>JSONL · 保留 14 天 · 日志与截图最多 100 MiB</small>
+          </span>
+        </div>
+        <button
+          class="secondary-button"
+          type="button"
+          disabled={opening}
+          onClick={async () => {
+            setOpening(true);
+            try {
+              await window.matrix.openAutomationLogDirectory();
+              context.setStatus("已打开自动化日志目录");
+            } catch (error) {
+              context.setStatus(
+                `无法打开日志目录：${error instanceof Error ? error.message : String(error)}`,
+                "error",
+              );
+            } finally {
+              setOpening(false);
+            }
+          }}
+        >
+          {opening ? "正在打开…" : "打开日志目录"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ApplicationUpdateSettings({
+  currentVersion,
+  checkPending,
+  checkCompleted,
+  feedback,
+  availableVersion,
+  downloadPending,
+  onCheck,
+  onDownload,
+}: {
+  currentVersion: string | null;
+  checkPending: boolean;
+  checkCompleted: boolean;
+  feedback: UpdateCheckFeedback | null;
+  availableVersion: string | null;
+  downloadPending: boolean;
+  onCheck(): void | Promise<void>;
+  onDownload(version: string): void | Promise<void>;
+}) {
+  return (
+    <section class="settings-surface" aria-labelledby="update-title">
+      <header class="settings-section-header">
+        <div>
+          <h2 id="update-title">软件更新</h2>
+          <p>检查是否有可供手动下载和安装的新版本。</p>
+        </div>
+      </header>
+      <div class="update-settings-row">
+        <span class="update-version">
+          <strong>当前版本</strong>
+          <small>{currentVersion ? `v${currentVersion}` : "正在读取…"}</small>
+        </span>
+        <span class="update-settings-actions">
+          <button
+            class="secondary-button"
+            type="button"
+            disabled={checkPending}
+            onClick={() => void onCheck()}
+          >
+            {checkPending
+              ? "正在检查…"
+              : checkCompleted
+                ? "重新检查"
+                : "检查新版本"}
+          </button>
+          {availableVersion && (
+            <button
+              type="button"
+              disabled={downloadPending}
+              onClick={() => void onDownload(availableVersion)}
+            >
+              {downloadPending ? "正在打开…" : `下载 v${availableVersion}`}
+            </button>
+          )}
+        </span>
+      </div>
+      {feedback && (
+        <p
+          class={`update-check-feedback${feedback.error ? " update-check-error" : ""}`}
+          role={feedback.error ? "alert" : "status"}
+        >
+          {feedback.message}
+        </p>
+      )}
+    </section>
   );
 }
 

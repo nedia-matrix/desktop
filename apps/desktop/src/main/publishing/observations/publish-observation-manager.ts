@@ -1,45 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import type { PublishResultUpdate } from "@nedia-matrix/ipc-contracts";
 import type {
-  PublishInterruptionReason,
+  ManagedPublishObservation,
+  PublishAutomationDiagnosticTrace,
+  PublishObservationEvent,
+} from "@nedia-matrix/publishing";
+import type {
   PublishResultEvent,
   PublishResultMonitor,
-} from "@nedia-matrix/platform-core";
-
-export interface ManagedPublishObservation {
-  readonly id: string;
-  ready(): Promise<void>;
-  arm(): void;
-  beginSubmissionAttempt(): Promise<void>;
-  interrupt(reason?: PublishInterruptionReason): Promise<void>;
-  stopSilently(): Promise<void>;
-}
-
-export interface PublishObservationEvent {
-  eventId: string;
-  observationId: string;
-  publicationId: string;
-  accountId: string;
-  platformId: string;
-  sequence: number;
-  result: PublishResultEvent;
-}
-
-export function toPublishResultUpdate(
-  event: PublishObservationEvent,
-): PublishResultUpdate {
-  const result = event.result;
-  return {
-    observationId: event.observationId,
-    publicationId: event.publicationId,
-    accountId: event.accountId,
-    status: result.kind,
-    message: result.kind === "published" ? "发布成功" : result.message,
-    platformContentId: result.kind === "published" ? result.contentId : null,
-    platformContentUrl: result.kind === "published" ? result.contentUrl : null,
-  };
-}
+} from "@nedia-matrix/platform-sdk";
 
 export class PublishObservationManager {
   private readonly observations = new Map<string, ManagedPublishObservation>();
@@ -53,24 +22,46 @@ export class PublishObservationManager {
     accountId: string;
     platformId: string;
     monitor: PublishResultMonitor;
-    onFinished?: () => void;
+    diagnostics?: PublishAutomationDiagnosticTrace;
+    onFinished?: () => void | Promise<void>;
   }): ManagedPublishObservation {
     void this.stop(input.accountId);
     const id = randomUUID();
     let stopped = false;
     let armed = false;
     let completed = false;
-    let finished = false;
+    let finishing: Promise<void> | undefined;
     let sequence = 0;
     let persistenceTail = Promise.resolve();
     let submissionAttempt: Promise<void> | undefined;
     let hasSubmissionEvidence = false;
     let hosted: ManagedPublishObservation;
-    const finish = (): void => {
-      if (finished) return;
-      finished = true;
-      input.onFinished?.();
+    const report = (
+      event: string,
+      details?: Readonly<Record<string, unknown>>,
+      level?: "debug" | "info" | "warn" | "error",
+    ) => {
+      try {
+        input.diagnostics?.report({
+          component: "monitor",
+          event,
+          ...(level ? { level } : {}),
+          ...(details ? { details } : {}),
+        });
+      } catch {
+        // Diagnostics must not affect publication observation.
+      }
     };
+    const finishDiagnostics = (outcome: string) => {
+      try {
+        input.diagnostics?.finish({ outcome });
+      } catch {
+        // Diagnostics must not affect publication observation.
+      }
+    };
+    report("monitor.attached");
+    const finish = (): Promise<void> =>
+      (finishing ??= Promise.resolve().then(() => input.onFinished?.()));
     const persist = (result: PublishResultEvent): Promise<void> => {
       const event: PublishObservationEvent = {
         eventId: randomUUID(),
@@ -81,17 +72,24 @@ export class PublishObservationManager {
         sequence: ++sequence,
         result,
       };
-      persistenceTail = persistenceTail.then(() => this.onEvent(event));
+      report("monitor.result_received", {
+        kind: result.kind,
+        source: "source" in result ? result.source : undefined,
+      });
+      persistenceTail = persistenceTail.then(async () => {
+        await this.onEvent(event);
+        report("monitor.result_persisted", { kind: result.kind });
+      });
       return persistenceTail;
     };
     let unsubscribe = (): void => undefined;
-    const finalize = (): void => {
+    const finalize = async (): Promise<void> => {
       unsubscribe();
       input.monitor.stop();
       if (this.observations.get(input.accountId) === hosted) {
         this.observations.delete(input.accountId);
       }
-      finish();
+      await finish();
     };
     unsubscribe = input.monitor.subscribe((result) => {
       if (
@@ -110,7 +108,26 @@ export class PublishObservationManager {
         result.kind === "cancelled"
       ) {
         completed = true;
-        void persisted.then(finalize);
+        void persisted
+          .then(async () => {
+            await finalize();
+            finishDiagnostics(result.kind);
+          })
+          .catch((error: unknown) => {
+            report(
+              "monitor.result_persist_failed",
+              {
+                kind: result.kind,
+                errorName: error instanceof Error ? error.name : "UnknownError",
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to finalize publish observation",
+              },
+              "error",
+            );
+            console.error("Failed to finalize publish observation", error);
+          });
       }
     });
     hosted = {
@@ -136,7 +153,8 @@ export class PublishObservationManager {
           await input.monitor.interrupt(reason);
         }
         await persistenceTail;
-        if (!completed) finalize();
+        await finalize();
+        if (!completed) finishDiagnostics(reason);
       },
       stopSilently: async () => {
         if (hasSubmissionEvidence) {
@@ -150,7 +168,8 @@ export class PublishObservationManager {
         if (this.observations.get(input.accountId) === hosted) {
           this.observations.delete(input.accountId);
         }
-        finish();
+        await finish();
+        report("monitor.stopped_silently");
       },
     };
     this.observations.set(input.accountId, hosted);

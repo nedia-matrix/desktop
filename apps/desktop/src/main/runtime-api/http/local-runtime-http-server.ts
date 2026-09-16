@@ -4,9 +4,9 @@ import {
   type ServerResponse,
 } from "node:http";
 
-import type { LocalRuntimeStatus } from "@nedia-matrix/ipc-contracts";
+import type { LocalRuntimeStatus } from "../../../bridge/contracts.js";
 
-import type { DesktopUseCases } from "../../application/desktop-application.js";
+import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
 import { writeJson } from "./http-json.js";
 import { RuntimeRouter, type LocalRuntimeHandshake } from "./runtime-router.js";
 
@@ -16,7 +16,7 @@ export const DEFAULT_LOCAL_RUNTIME_PORT = 17_653;
 export type { LocalRuntimeHandshake };
 
 interface LocalRuntimeHttpServerOptions {
-  application: DesktopUseCases;
+  application: NediaMatrixUseCases;
   handshake: LocalRuntimeHandshake;
   port?: number;
 }

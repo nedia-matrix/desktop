@@ -1,4 +1,4 @@
-import type { PlatformBrowserPolicy } from "@nedia-matrix/platform-core";
+import type { PlatformBrowserPolicy } from "@nedia-matrix/platform-sdk";
 
 export function isAllowedPlatformNavigation(
   targetUrl: string,

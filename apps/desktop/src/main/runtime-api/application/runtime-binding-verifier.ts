@@ -1,9 +1,13 @@
 import { AccountBindingVerificationError } from "./runtime-account-binding-service.js";
-import type { DesktopUseCases } from "../../application/desktop-application.js";
+import {
+  accountBindingErrorCodes,
+  type AccountBindingErrorCode,
+} from "@nedia-matrix/runtime-account-binding";
+import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
 
 export class RuntimeBindingError extends Error {
   constructor(
-    readonly code: "ACCOUNT_IDENTITY_MISMATCH" | "NOT_LOGGED_IN",
+    readonly code: AccountBindingErrorCode,
     message: string,
   ) {
     super(message);
@@ -11,20 +15,22 @@ export class RuntimeBindingError extends Error {
 }
 
 export class RuntimeBindingVerifier {
-  constructor(private readonly application: DesktopUseCases) {}
+  constructor(private readonly application: NediaMatrixUseCases) {}
 
   async verify(
     platformAccountId: string,
     runtimeAccountId?: string,
     platform?: string,
+    notifyOnSuccess = false,
   ): Promise<
-    Awaited<ReturnType<DesktopUseCases["accountBindings"]["verify"]>>
+    Awaited<ReturnType<NediaMatrixUseCases["accountBindings"]["verify"]>>
   > {
     try {
       return await this.application.accountBindings.verify({
         platformAccountId,
         runtimeAccountId,
         platform,
+        notifyOnSuccess,
       });
     } catch (error) {
       if (error instanceof AccountBindingVerificationError) {
@@ -39,12 +45,12 @@ export class RuntimeBindingVerifier {
 }
 
 function hasBindingErrorCode(error: unknown): error is Error & {
-  code: "ACCOUNT_IDENTITY_MISMATCH" | "NOT_LOGGED_IN";
+  code: AccountBindingErrorCode;
 } {
   return (
     error instanceof Error &&
-    ((error as unknown as { code: unknown }).code ===
-      "ACCOUNT_IDENTITY_MISMATCH" ||
-      (error as unknown as { code: unknown }).code === "NOT_LOGGED_IN")
+    accountBindingErrorCodes.includes(
+      (error as unknown as { code: never }).code,
+    )
   );
 }

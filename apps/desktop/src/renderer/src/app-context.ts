@@ -1,9 +1,9 @@
+import type { PlatformAccountView } from "@nedia-matrix/account-management";
 import type {
-  PlatformAccountSummary,
-  PlatformSummary,
   PublicationSummary,
   PublishResultUpdate,
-} from "@nedia-matrix/ipc-contracts";
+} from "@nedia-matrix/publishing";
+import type { PlatformSummary } from "../../bridge/contracts.js";
 
 export type StatusKind = "idle" | "busy" | "error";
 
@@ -14,7 +14,7 @@ export interface AppStatus {
 
 export class AppContext {
   platforms: readonly PlatformSummary[] = [];
-  accounts: readonly PlatformAccountSummary[] = [];
+  accounts: readonly PlatformAccountView[] = [];
   publications: readonly PublicationSummary[] = [];
 
   private readonly publishListeners = new Set<
@@ -25,7 +25,7 @@ export class AppContext {
     PublishResultUpdate
   >();
   private readonly accountListeners = new Set<
-    (accounts: readonly PlatformAccountSummary[]) => void
+    (accounts: readonly PlatformAccountView[]) => void
   >();
   private readonly statusListeners = new Set<(status: AppStatus) => void>();
   private accountRefreshRequested = false;
@@ -49,7 +49,7 @@ export class AppContext {
   }
 
   onAccountUpdate(
-    listener: (accounts: readonly PlatformAccountSummary[]) => void,
+    listener: (accounts: readonly PlatformAccountView[]) => void,
   ): () => void {
     this.accountListeners.add(listener);
     return () => this.accountListeners.delete(listener);
@@ -59,7 +59,7 @@ export class AppContext {
     this.platforms = await window.matrix.listPlatforms();
   }
 
-  async refreshAccounts(): Promise<readonly PlatformAccountSummary[]> {
+  async refreshAccounts(): Promise<readonly PlatformAccountView[]> {
     this.accounts = await window.matrix.listPlatformAccounts();
     return this.accounts;
   }

@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  platformFor,
-  platformSummaries,
+  desktopPlatformRegistry,
+  desktopPlatformSummaries,
 } from "../src/main/platforms/platform-registry.js";
 
 describe("registered desktop platforms", () => {
   it("exposes capability-oriented modules through the registry", () => {
-    expect(platformSummaries().map((platform) => platform.id)).toEqual([
+    expect(desktopPlatformSummaries().map((platform) => platform.id)).toEqual([
       "douyin",
       "xiaohongshu",
       "kuaishou",
     ]);
-    expect(platformFor("douyin").publishing?.forms.video).toBeDefined();
-    expect(platformFor("douyin").publishing?.forms.video).toMatchObject({
+    expect(
+      desktopPlatformRegistry.require("douyin").publishing?.forms.video,
+    ).toBeDefined();
+    expect(
+      desktopPlatformRegistry.require("douyin").publishing?.forms.video,
+    ).toMatchObject({
       constraints: {
         titleMaxLength: 20,
         bodyMaxLength: 1_000,
@@ -21,7 +25,8 @@ describe("registered desktop platforms", () => {
       },
     });
     expect(
-      platformFor("xiaohongshu").publishing?.forms.imageText,
+      desktopPlatformRegistry.require("xiaohongshu").publishing?.forms
+        .imageText,
     ).toMatchObject({
       constraints: {
         titleMaxLength: 20,
@@ -29,16 +34,20 @@ describe("registered desktop platforms", () => {
         mediaMaxCount: 18,
       },
     });
-    expect(platformFor("douyin").publishing?.createResultMonitor).toBeTypeOf(
-      "function",
-    );
-    expect(platformFor("kuaishou").publishing?.forms.video).toMatchObject({
+    expect(
+      desktopPlatformRegistry.require("douyin").publishing?.createResultMonitor,
+    ).toBeTypeOf("function");
+    expect(
+      desktopPlatformRegistry.require("kuaishou").publishing?.forms.video,
+    ).toMatchObject({
       submissionModes: ["automatic", "manual_confirmation"],
     });
-    expect(platformFor("kuaishou").publishing?.forms.imageText).toMatchObject({
+    expect(
+      desktopPlatformRegistry.require("kuaishou").publishing?.forms.imageText,
+    ).toMatchObject({
       submissionModes: ["automatic", "manual_confirmation"],
     });
-    expect(platformSummaries()).toContainEqual(
+    expect(desktopPlatformSummaries()).toContainEqual(
       expect.objectContaining({
         id: "kuaishou",
         implementationStatus: "live-tested",
@@ -64,7 +73,7 @@ describe("registered desktop platforms", () => {
         ],
       }),
     );
-    expect(platformSummaries()).toEqual(
+    expect(desktopPlatformSummaries()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "douyin",
@@ -81,7 +90,7 @@ describe("registered desktop platforms", () => {
   });
 
   it("rejects platform ids that are not registered", () => {
-    expect(() => platformFor("missing-platform")).toThrow(
+    expect(() => desktopPlatformRegistry.require("missing-platform")).toThrow(
       "Platform is not registered: missing-platform",
     );
   });

@@ -1,6 +1,8 @@
 import { link, lstat, mkdir, readdir, rmdir, unlink } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 
+import type { StoredPublicationAsset } from "@nedia-matrix/publishing";
+
 const extensionsByMediaType: Readonly<Record<string, string>> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -12,11 +14,6 @@ export interface CommittedPublicationAsset {
   absolutePath: string;
   created: boolean;
   relativePath: string;
-}
-
-export interface StoredPublicationAsset {
-  relativePath: string;
-  size: number;
 }
 
 export class ContentAddressedPublicationAssetStore {

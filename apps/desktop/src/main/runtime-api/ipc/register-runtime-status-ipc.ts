@@ -1,24 +1,22 @@
-import {
-  ipcChannels,
-  type SetLocalRuntimeRunningRequest,
-} from "@nedia-matrix/ipc-contracts";
+import { ipcChannels } from "../../../bridge/channels.js";
+import type { SetLocalRuntimeRunningRequest } from "../../../bridge/contracts.js";
 import { ipcMain } from "electron";
 
-import type { LocalRuntimeHttpServer } from "../http/local-runtime-http-server.js";
+import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
 
 export function registerRuntimeStatusIpcHandler(
-  server: LocalRuntimeHttpServer,
+  application: Pick<NediaMatrixUseCases, "runtime">,
 ): void {
-  ipcMain.handle(ipcChannels.getLocalRuntimeStatus, () => server.status());
+  ipcMain.handle(ipcChannels.getLocalRuntimeStatus, () =>
+    application.runtime.status(),
+  );
   ipcMain.handle(
     ipcChannels.setLocalRuntimeRunning,
     async (_event, request: SetLocalRuntimeRunningRequest) => {
       if (typeof request?.running !== "boolean") {
         throw new TypeError("Local runtime running state must be a boolean");
       }
-      if (request.running) await server.start();
-      else await server.stop();
-      return server.status();
+      return application.runtime.setRunning(request);
     },
   );
 }

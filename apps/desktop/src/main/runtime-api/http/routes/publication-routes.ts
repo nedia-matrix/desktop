@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { DesktopUseCases } from "../../../application/desktop-application.js";
+import type { NediaMatrixUseCases } from "../../../application/nedia-matrix-application.js";
 import {
   RuntimeBindingError,
   type RuntimeBindingVerifier,
@@ -13,7 +13,7 @@ import { readJsonRequest, writeJson } from "../http-json.js";
 
 export class RuntimePublicationRoutes {
   constructor(
-    private readonly application: DesktopUseCases,
+    private readonly application: NediaMatrixUseCases,
     private readonly bindingVerifier: RuntimeBindingVerifier,
   ) {}
 

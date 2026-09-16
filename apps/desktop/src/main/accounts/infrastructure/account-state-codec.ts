@@ -1,32 +1,22 @@
 import {
+  assertPlatformAccountSnapshot,
+  type AccountReplacementAlias,
   platformAccountInfoKeys,
+  platformAccountLifecycles,
+  platformAccountStatuses,
   type PlatformAccountInfoItem,
   type PlatformAccountLifecycle,
   type PlatformAccountStatus,
-  type PlatformAccountSummary,
-} from "@nedia-matrix/ipc-contracts";
-
-import type {
-  AccountReplacementAlias,
-  RetiredBrowserProfile,
-} from "../application/account-types.js";
+  type PlatformAccountSnapshot,
+  type RetiredBrowserProfile,
+} from "@nedia-matrix/account-management";
 
 export interface AccountStoreState {
   schemaVersion: 1;
-  accounts: PlatformAccountSummary[];
+  accounts: PlatformAccountSnapshot[];
   replacementAliases: AccountReplacementAlias[];
   retiredProfiles: RetiredBrowserProfile[];
 }
-
-const accountStatuses: readonly PlatformAccountStatus[] = [
-  "authenticated",
-  "login_required",
-  "unknown",
-];
-const accountLifecycles: readonly PlatformAccountLifecycle[] = [
-  "pending_identity",
-  "active",
-];
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
@@ -76,12 +66,12 @@ function parseAccountInfo(value: unknown): PlatformAccountInfoItem[] | null {
   return items;
 }
 
-function parseAccount(value: unknown): PlatformAccountSummary | null {
+function parseAccount(value: unknown): PlatformAccountSnapshot | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;
   }
 
-  const account = value as Partial<PlatformAccountSummary>;
+  const account = value as Partial<PlatformAccountSnapshot>;
   const legacyAccount = value as {
     followerCount?: unknown;
     contentCount?: unknown;
@@ -94,7 +84,7 @@ function parseAccount(value: unknown): PlatformAccountSummary | null {
       : typeof legacyPartition === "string"
         ? legacyPartition.replace(/^persist:/, "")
         : null;
-  const lifecycle = accountLifecycles.some(
+  const lifecycle = platformAccountLifecycles.some(
     (candidate) => candidate === account.lifecycle,
   )
     ? account.lifecycle
@@ -103,6 +93,8 @@ function parseAccount(value: unknown): PlatformAccountSummary | null {
       : "active";
   const identityScheme =
     account.identityScheme === undefined ? null : account.identityScheme;
+  const profileSyncedAt =
+    account.profileSyncedAt === undefined ? null : account.profileSyncedAt;
   if (
     typeof account.id !== "string" ||
     typeof account.platformId !== "string" ||
@@ -112,10 +104,11 @@ function parseAccount(value: unknown): PlatformAccountSummary | null {
     !isNullableString(account.externalAccountId) ||
     !isNullableString(account.nickname) ||
     !isNullableString(account.avatarUrl) ||
+    !isNullableString(profileSyncedAt) ||
     parsedAccountInfo === null ||
     !isOptionalNullableCount(legacyAccount.followerCount) ||
     !isOptionalNullableCount(legacyAccount.contentCount) ||
-    !accountStatuses.some((status) => status === account.status) ||
+    !platformAccountStatuses.some((status) => status === account.status) ||
     !isNullableString(account.lastVerifiedAt) ||
     typeof account.createdAt !== "string" ||
     typeof account.updatedAt !== "string" ||
@@ -151,20 +144,37 @@ function parseAccount(value: unknown): PlatformAccountSummary | null {
             : []),
         ]
       : parsedAccountInfo;
-  return {
+  const normalized: PlatformAccountSnapshot = {
     ...currentFields,
+    id: account.id,
+    platformId: account.platformId,
     profileId,
-    lifecycle,
+    lifecycle: lifecycle as PlatformAccountLifecycle,
+    displayName: account.displayName,
     identityScheme,
+    externalAccountId: account.externalAccountId,
+    nickname: account.nickname,
+    avatarUrl: account.avatarUrl,
     accountInfo,
-  } as PlatformAccountSummary;
+    profileSyncedAt,
+    status: account.status as PlatformAccountStatus,
+    lastVerifiedAt: account.lastVerifiedAt,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt,
+  };
+  try {
+    assertPlatformAccountSnapshot(normalized);
+  } catch {
+    return null;
+  }
+  return normalized;
 }
 
-export function parseStoredAccounts(value: unknown): PlatformAccountSummary[] {
+export function parseStoredAccounts(value: unknown): PlatformAccountSnapshot[] {
   if (!Array.isArray(value)) return [];
   return value
     .map(parseAccount)
-    .filter((account): account is PlatformAccountSummary => account !== null);
+    .filter((account): account is PlatformAccountSnapshot => account !== null);
 }
 
 function parseReplacementAlias(value: unknown): AccountReplacementAlias | null {
@@ -193,7 +203,8 @@ function parseRetiredProfile(value: unknown): RetiredBrowserProfile | null {
     typeof candidate.survivingAccountId !== "string" ||
     typeof candidate.retiredAt !== "string" ||
     typeof candidate.removeAfter !== "string" ||
-    candidate.reason !== "replaced_after_duplicate_login"
+    (candidate.reason !== "replaced_after_duplicate_login" &&
+      candidate.reason !== "account_deleted")
   ) {
     return null;
   }

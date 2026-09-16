@@ -1,12 +1,11 @@
-import {
-  ipcChannels,
-  type SelectPublishMediaRequest,
-} from "@nedia-matrix/ipc-contracts";
+import { ipcChannels } from "../../../bridge/channels.js";
+import type { SelectPublishMediaRequest } from "@nedia-matrix/publishing";
 import { dialog, ipcMain, shell } from "electron";
 
-import type { DesktopUseCases } from "../../application/desktop-application.js";
+import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
+import { readLocalMediaResources } from "./local-media-resources.js";
 
-type PublishIpcApplication = Pick<DesktopUseCases, "publications">;
+type PublishIpcApplication = Pick<NediaMatrixUseCases, "publications">;
 
 interface PublishIpcDependencies {
   application: PublishIpcApplication;
@@ -17,6 +16,9 @@ export function registerPublicationIpcHandlers({
 }: PublishIpcDependencies): void {
   ipcMain.handle(ipcChannels.listPublications, () =>
     application.publications.list(),
+  );
+  ipcMain.handle(ipcChannels.openPublicationReview, (_event, request) =>
+    application.publications.openReview(request),
   );
   ipcMain.handle(ipcChannels.openPublication, async (_event, request) =>
     shell.openExternal(application.publications.publicationUrl(request)),
@@ -40,9 +42,10 @@ export function registerPublicationIpcHandlers({
       if (result.canceled || result.filePaths.length === 0) {
         return { status: "cancelled" } as const;
       }
+      const resources = await readLocalMediaResources(result.filePaths);
       return application.publications.registerLocalMedia({
         ...request,
-        filePaths: result.filePaths,
+        resources,
       });
     },
   );

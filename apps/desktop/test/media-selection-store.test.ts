@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MediaSelectionUnavailableError } from "@nedia-matrix/publishing";
 
-import {
-  MediaSelectionStore,
-  MediaSelectionUnavailableError,
-} from "../src/main/publishing/infrastructure/media-selection-store.js";
+import { MediaSelectionStore } from "../src/main/publishing/infrastructure/media-selection-store.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -15,7 +13,7 @@ describe("MediaSelectionStore", () => {
     const id = store.create({
       accountId: "account-1",
       contentForm: "video",
-      filePaths: ["/tmp/video.mp4"],
+      resourceReferences: ["/tmp/video.mp4"],
       files: [{ name: "video.mp4", size: 1 }],
     });
 
@@ -36,13 +34,13 @@ describe("MediaSelectionStore", () => {
     const consumed = store.create({
       accountId: "account-1",
       contentForm: "video",
-      filePaths: ["/tmp/first.mp4"],
+      resourceReferences: ["/tmp/first.mp4"],
       files: [{ name: "first.mp4", size: 1 }],
     });
     const removed = store.create({
       accountId: "account-1",
       contentForm: "imageText",
-      filePaths: ["/tmp/image.png"],
+      resourceReferences: ["/tmp/image.png"],
       files: [{ name: "image.png", size: 1 }],
     });
     store.consume(consumed);
@@ -59,7 +57,7 @@ describe("MediaSelectionStore", () => {
     const id = store.create({
       accountId: "account-1",
       contentForm: "video",
-      filePaths: ["/tmp/video.mp4"],
+      resourceReferences: ["/tmp/video.mp4"],
       files: [{ name: "video.mp4", size: 1 }],
     });
     vi.advanceTimersByTime(30 * 60_000 + 1);
@@ -72,7 +70,7 @@ describe("MediaSelectionStore", () => {
     const id = store.create({
       accountId: "account-1",
       contentForm: "video",
-      filePaths: ["/tmp/video.mp4"],
+      resourceReferences: ["/tmp/video.mp4"],
       files: [{ name: "video.mp4", size: 1 }],
     });
 

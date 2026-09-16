@@ -16,7 +16,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@nedia-matrix/automation-contracts": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

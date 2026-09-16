@@ -1,10 +1,14 @@
-import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
+import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AccountService } from "../src/main/accounts/application/account-service.js";
-import { ElectronAccountRepository } from "../src/main/accounts/infrastructure/electron-account-repository.js";
+import {
+  AccountService,
+  type AccountServiceDependencies,
+} from "@nedia-matrix/account-management";
+import { AccountStateRepository } from "../src/main/accounts/infrastructure/account-state-repository.js";
+import { desktopPlatformRegistry } from "../src/main/platforms/platform-registry.js";
 
-const account: PlatformAccountSummary = {
+const account: PlatformAccountSnapshot = {
   id: "account-1",
   platformId: "douyin",
   profileId: "matrix-douyin-account-1",
@@ -15,23 +19,40 @@ const account: PlatformAccountSummary = {
   nickname: null,
   avatarUrl: null,
   accountInfo: [],
+  profileSyncedAt: null,
   status: "login_required",
   lastVerifiedAt: null,
   createdAt: "2026-08-10T00:00:00.000Z",
   updatedAt: "2026-08-10T00:00:00.000Z",
 };
 
+const accountServiceDefaults = {
+  createId: () => "unused-account-id",
+  createProfileId: (platformId: string, accountId: string) =>
+    `matrix-${platformId}-${accountId}`,
+  sessionDetector: async () => ({
+    status: "unknown" as const,
+    reason: "unused session detector",
+  }),
+} satisfies Pick<
+  AccountServiceDependencies,
+  "createId" | "createProfileId" | "sessionDetector"
+>;
+
 afterEach(() => vi.useRealTimers());
 
 describe("account application", () => {
   it("notifies after account creation and completed removal", async () => {
-    const accounts = new Map<string, PlatformAccountSummary>();
+    const accounts = new Map<string, PlatformAccountSnapshot>();
     let changes = 0;
     const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
       accountStore: memoryAccountStore(accounts),
       browserSessions: {
         openForLogin: async () => openedSession(),
-        openForAutomation: async () => openedSession(),
+        openUserPage: async () => openedSession(),
+        openForVerification: async () => openedSession(),
         closeAutomation: async () => undefined,
         removeProfile: async () => undefined,
       },
@@ -67,14 +88,16 @@ describe("account application", () => {
         externalAccountId: "douyin-42",
         nickname: "自动识别账号",
         avatarUrl: null,
-        accountInfo: [{ key: "follower_count", value: 12800 }],
         source: "api",
       });
     const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
       accountStore: memoryAccountStore(accounts),
       browserSessions: {
         openForLogin,
-        openForAutomation: async () => openedSession(),
+        openUserPage: async () => openedSession(),
+        openForVerification: async () => openedSession(),
         closeAutomation: async () => undefined,
         removeProfile: async () => undefined,
       },
@@ -100,13 +123,13 @@ describe("account application", () => {
       status: "authenticated",
       externalAccountId: "douyin-42",
       nickname: "自动识别账号",
-      accountInfo: [{ key: "follower_count", value: 12800 }],
+      accountInfo: [],
     });
     expect(updates).toHaveLength(1);
   });
 
   it("recognizes an observed-response login from an event and disposes its listener", async () => {
-    const kuaishouAccount: PlatformAccountSummary = {
+    const kuaishouAccount: PlatformAccountSnapshot = {
       ...account,
       platformId: "kuaishou",
       profileId: "matrix-kuaishou-account-1",
@@ -115,6 +138,7 @@ describe("account application", () => {
     const accounts = new Map([[kuaishouAccount.id, kuaishouAccount]]);
     let notifyResponse = () => undefined;
     const dispose = vi.fn();
+    const unsubscribe = vi.fn();
     const sessionDetector = vi
       .fn()
       .mockResolvedValueOnce({
@@ -135,16 +159,19 @@ describe("account application", () => {
       sessionProbeClient: {
         subscribeObservedResponses(listener: () => void) {
           notifyResponse = listener;
-          return () => undefined;
+          return unsubscribe;
         },
         dispose,
       },
     } as never;
     const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
       accountStore: memoryAccountStore(accounts),
       browserSessions: {
         openForLogin: async () => opened,
-        openForAutomation: async () => opened,
+        openUserPage: async () => opened,
+        openForVerification: async () => opened,
         closeAutomation: async () => undefined,
         removeProfile: async () => undefined,
       },
@@ -164,11 +191,12 @@ describe("account application", () => {
       });
     });
     expect(sessionDetector).toHaveBeenCalledTimes(2);
-    expect(dispose).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(dispose).not.toHaveBeenCalled();
   });
 
   it("preserves a stable account identity when automatic recognition detects a switched account", async () => {
-    const storedAccount: PlatformAccountSummary = {
+    const storedAccount: PlatformAccountSnapshot = {
       ...account,
       lifecycle: "active",
       identityScheme: "douyin.short_id",
@@ -180,10 +208,13 @@ describe("account application", () => {
     const accounts = new Map([[storedAccount.id, storedAccount]]);
     const updates: number[] = [];
     const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
       accountStore: memoryAccountStore(accounts),
       browserSessions: {
         openForLogin: async () => openedSession(),
-        openForAutomation: async () => openedSession(),
+        openUserPage: async () => openedSession(),
+        openForVerification: async () => openedSession(),
         closeAutomation: async () => undefined,
         removeProfile: async () => undefined,
       },
@@ -217,7 +248,7 @@ describe("account application", () => {
   });
 
   it("requires an explicit refresh to adopt the currently detected account", async () => {
-    const storedAccount: PlatformAccountSummary = {
+    const storedAccount: PlatformAccountSnapshot = {
       ...account,
       lifecycle: "active",
       identityScheme: "douyin.short_id",
@@ -228,10 +259,13 @@ describe("account application", () => {
     };
     const accounts = new Map([[storedAccount.id, storedAccount]]);
     const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
       accountStore: memoryAccountStore(accounts),
       browserSessions: {
         openForLogin: async () => openedSession(),
-        openForAutomation: async () => openedSession(),
+        openUserPage: async () => openedSession(),
+        openForVerification: async () => openedSession(),
         closeAutomation: async () => undefined,
         removeProfile: async () => undefined,
       },
@@ -277,7 +311,7 @@ describe("account application", () => {
   });
 
   it("does not downgrade an authenticated account after an inconclusive verification", async () => {
-    const storedAccount: PlatformAccountSummary = {
+    const storedAccount: PlatformAccountSnapshot = {
       ...account,
       lifecycle: "active",
       identityScheme: "douyin.short_id",
@@ -290,10 +324,12 @@ describe("account application", () => {
     const updates: number[] = [];
     const closeVerification = vi.fn(async () => undefined);
     const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
       accountStore: memoryAccountStore(accounts),
       browserSessions: {
         openForLogin: async () => openedSession(),
-        openForAutomation: async () => openedSession(),
+        openUserPage: async () => openedSession(),
         openForVerification: async () =>
           ({
             driver: {},
@@ -323,8 +359,8 @@ describe("account application", () => {
   });
 
   it("keeps the existing account id and adopts a duplicate candidate profile", async () => {
-    const store = new ElectronAccountRepository(accountPersistence());
-    const survivingAccount: PlatformAccountSummary = {
+    const store = new AccountStateRepository(accountPersistence());
+    const survivingAccount: PlatformAccountSnapshot = {
       ...account,
       id: "surviving-account",
       profileId: "old-profile",
@@ -341,10 +377,13 @@ describe("account application", () => {
     const updates: number[] = [];
     let now = new Date("2026-08-26T00:00:00.000Z");
     const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
       accountStore: store,
       browserSessions: {
         openForLogin: async (stored) => openedSession(stored.profileId),
-        openForAutomation: async (stored) => openedSession(stored.profileId),
+        openUserPage: async (stored) => openedSession(stored.profileId),
+        openForVerification: async (stored) => openedSession(stored.profileId),
         closeAutomation,
         removeProfile,
       },
@@ -402,7 +441,7 @@ describe("account application", () => {
   });
 
   it("does not replace the profile while the existing account is publishing", async () => {
-    const store = new ElectronAccountRepository(accountPersistence());
+    const store = new AccountStateRepository(accountPersistence());
     store.put({
       ...account,
       id: "surviving-account",
@@ -414,10 +453,13 @@ describe("account application", () => {
     });
     const closeAutomation = vi.fn(async () => undefined);
     const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
       accountStore: store,
       browserSessions: {
         openForLogin: async (stored) => openedSession(stored.profileId),
-        openForAutomation: async (stored) => openedSession(stored.profileId),
+        openUserPage: async (stored) => openedSession(stored.profileId),
+        openForVerification: async (stored) => openedSession(stored.profileId),
         closeAutomation,
         removeProfile: async () => undefined,
       },
@@ -445,6 +487,153 @@ describe("account application", () => {
     expect(application.listAccounts()).toHaveLength(2);
     expect(closeAutomation).not.toHaveBeenCalled();
   });
+
+  it("refreshes optional account profile data after exact identity verification", async () => {
+    const storedAccount: PlatformAccountSnapshot = {
+      ...account,
+      lifecycle: "active",
+      identityScheme: "douyin.short_id",
+      externalAccountId: "douyin-42",
+      nickname: "账号",
+      displayName: "账号",
+      status: "authenticated",
+      accountInfo: [{ key: "following_count", value: 4 }],
+    };
+    const accounts = new Map([[storedAccount.id, storedAccount]]);
+    const close = vi.fn(async () => undefined);
+    let resolveProfileResponse!: (response: {
+      status: number;
+      ok: boolean;
+      body: unknown;
+    }) => void;
+    const profileResponse = new Promise<{
+      status: number;
+      ok: boolean;
+      body: unknown;
+    }>((resolve) => {
+      resolveProfileResponse = resolve;
+    });
+    const requestJson = vi.fn(async () => profileResponse);
+    const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
+      accountStore: memoryAccountStore(accounts),
+      browserSessions: {
+        openForLogin: async () => openedSession(),
+        openUserPage: async () => openedSession(),
+        openForVerification: async () => ({
+          ...openedSession(),
+          close,
+          dataClient: {
+            navigate: async () => undefined,
+            requestJson,
+            waitForJsonResponse: async () => null,
+            dispose: () => undefined,
+          },
+        }),
+        closeAutomation: async () => undefined,
+        removeProfile: async () => undefined,
+      },
+      removeAccountResources: async () => undefined,
+      now: () => new Date("2026-08-11T00:00:00.000Z"),
+      sessionDetector: async () => ({
+        status: "authenticated",
+        identityScheme: "douyin.short_id",
+        externalAccountId: "douyin-42",
+        nickname: "账号",
+        avatarUrl: null,
+        source: "api",
+      }),
+    });
+
+    const refresh = application.refreshAccountProfile({
+      accountId: storedAccount.id,
+    });
+    await vi.waitFor(() => expect(requestJson).toHaveBeenCalledOnce());
+    expect(close).not.toHaveBeenCalled();
+    resolveProfileResponse({
+      status: 200,
+      ok: true,
+      body: {
+        user: {
+          signature: "新简介",
+          follower_count: 25,
+          aweme_count: 7,
+        },
+      },
+    });
+
+    await expect(refresh).resolves.toMatchObject({
+      accountInfo: [
+        { key: "following_count", value: 4 },
+        { key: "desc", value: "新简介" },
+        { key: "follower_count", value: 25 },
+        { key: "content_count", value: 7 },
+      ],
+      profileSyncedAt: "2026-08-11T00:00:00.000Z",
+    });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("records a logged-out detection before rejecting profile refresh", async () => {
+    const storedAccount: PlatformAccountSnapshot = {
+      ...account,
+      lifecycle: "active",
+      identityScheme: "douyin.short_id",
+      externalAccountId: "douyin-42",
+      nickname: "账号",
+      displayName: "账号",
+      status: "authenticated",
+    };
+    const accounts = new Map([[storedAccount.id, storedAccount]]);
+    const close = vi.fn(async () => undefined);
+    const onAccountsChanged = vi.fn();
+    const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
+      accountStore: memoryAccountStore(accounts),
+      browserSessions: {
+        openForLogin: async () => openedSession(),
+        openUserPage: async () => openedSession(),
+        openForVerification: async () => ({
+          ...openedSession(),
+          close,
+          dataClient: {
+            navigate: async () => undefined,
+            requestJson: async () => ({
+              status: 500,
+              ok: false,
+              body: null,
+            }),
+            waitForJsonResponse: async () => null,
+            dispose: () => undefined,
+          },
+        }),
+        closeAutomation: async () => undefined,
+        removeProfile: async () => undefined,
+      },
+      removeAccountResources: async () => undefined,
+      now: () => new Date("2026-08-11T00:00:00.000Z"),
+      sessionDetector: async () => ({
+        status: "login_required",
+        source: "api",
+      }),
+      onAccountsChanged,
+    });
+
+    await expect(
+      application.refreshAccountProfile({ accountId: storedAccount.id }),
+    ).rejects.toThrow("平台账号未登录");
+
+    expect(accounts.get(storedAccount.id)).toMatchObject({
+      status: "login_required",
+      lastVerifiedAt: "2026-08-11T00:00:00.000Z",
+      identityScheme: "douyin.short_id",
+      externalAccountId: "douyin-42",
+    });
+    expect(onAccountsChanged).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+  });
 });
 
 function accountPersistence() {
@@ -455,7 +644,7 @@ function accountPersistence() {
   };
 }
 
-function memoryAccountStore(accounts: Map<string, PlatformAccountSummary>) {
+function memoryAccountStore(accounts: Map<string, PlatformAccountSnapshot>) {
   const requireAccount = (accountId: string) => {
     const stored = accounts.get(accountId);
     if (!stored) throw new TypeError("Platform account does not exist");
@@ -478,7 +667,7 @@ function memoryAccountStore(accounts: Map<string, PlatformAccountSummary>) {
           candidate.identityScheme === identity.identityScheme &&
           candidate.externalAccountId === identity.externalAccountId,
       ),
-    put: (stored: PlatformAccountSummary) =>
+    put: (stored: PlatformAccountSnapshot) =>
       void accounts.set(stored.id, stored),
     replaceCandidateProfile: () => {
       throw new Error("not used");
@@ -492,6 +681,7 @@ function memoryAccountStore(accounts: Map<string, PlatformAccountSummary>) {
 
 function openedSession(profileId = account.profileId) {
   return {
+    close: async () => undefined,
     id: "session-1",
     profileId,
     page: { isClosed: () => false },

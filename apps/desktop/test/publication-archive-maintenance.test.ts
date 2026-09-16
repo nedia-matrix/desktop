@@ -1,10 +1,11 @@
-import type { PublicationRecord } from "@nedia-matrix/application-publishing";
+import {
+  PublicationArchiveMaintenance,
+  type PublicationSnapshot,
+} from "@nedia-matrix/publishing";
 import { describe, expect, it } from "vitest";
 
-import { PublicationArchiveMaintenance } from "../src/main/publishing/application/publication-archive-maintenance.js";
-
 class MemoryPublications {
-  readonly records = new Map<string, PublicationRecord>();
+  readonly records = new Map<string, PublicationSnapshot>();
 
   list() {
     return [...this.records.values()];
@@ -14,7 +15,7 @@ class MemoryPublications {
     return this.records.get(id);
   }
 
-  save(record: PublicationRecord) {
+  save(record: PublicationSnapshot) {
     this.records.set(record.publication.id, record);
   }
 
@@ -51,11 +52,22 @@ function publication(
     createdAt?: string;
     path?: string;
     retained?: boolean;
-    state?: PublicationRecord["publication"]["state"];
+    state?: PublicationSnapshot["publication"]["state"];
   } = {},
-): PublicationRecord {
+): PublicationSnapshot {
   const createdAt = options.createdAt ?? "2026-08-01T00:00:00.000Z";
   const assetId = `asset-${id}`;
+  const state = options.state ?? "published";
+  const from =
+    state === "published"
+      ? "verifying"
+      : state === "failed"
+        ? "preparing"
+        : state === "uncertain"
+          ? "submitting"
+          : state === "verifying"
+            ? "submitting"
+            : "preparing";
   return {
     requestId: `request-${id}`,
     publication: {
@@ -63,8 +75,8 @@ function publication(
       platformId: "douyin",
       accountId: "account-1",
       contentRevisionId: `revision-${id}`,
-      state: options.state ?? "published",
-      transitions: [],
+      state,
+      transitions: [{ from, to: state, occurredAt: createdAt }],
     },
     contentRevision: {
       id: `revision-${id}`,
@@ -100,7 +112,11 @@ function publication(
   };
 }
 
-function fixture(records: PublicationRecord[], files: Array<[string, number]>) {
+function fixture(
+  records: PublicationSnapshot[],
+  files: Array<[string, number]>,
+  activePublicationIds: ReadonlySet<string> = new Set(),
+) {
   const publications = new MemoryPublications();
   records.forEach((record) => publications.save(record));
   const assets = new MemoryAssets();
@@ -108,7 +124,10 @@ function fixture(records: PublicationRecord[], files: Array<[string, number]>) {
   return {
     publications,
     assets,
-    maintenance: new PublicationArchiveMaintenance(publications, assets),
+    maintenance: new PublicationArchiveMaintenance(publications, assets, {
+      hasActiveTask: (publicationId) => activePublicationIds.has(publicationId),
+      now: () => new Date("2026-09-01T00:00:00.000Z"),
+    }),
   };
 }
 
@@ -227,6 +246,49 @@ describe("PublicationArchiveMaintenance", () => {
     expect(assets.files.has(pathA)).toBe(false);
   });
 
+  it("preserves retained archives during cleanup but allows explicit removal", async () => {
+    const { assets, maintenance, publications } = fixture(
+      [publication("retained", { path: pathA, retained: true })],
+      [[pathA, 60]],
+    );
+
+    await expect(
+      maintenance.cleanup({
+        retentionBefore: new Date("2026-09-01T00:00:00.000Z"),
+        maxBytes: 0,
+      }),
+    ).resolves.toMatchObject({ removedPublicationIds: [], remainingBytes: 60 });
+    expect(publications.records.has("retained")).toBe(true);
+    expect(assets.files.has(pathA)).toBe(true);
+
+    await expect(maintenance.removePublication("retained")).resolves.toEqual({
+      removedPublicationIds: ["retained"],
+      removedAssetCount: 1,
+      reclaimedBytes: 60,
+      remainingBytes: 0,
+    });
+    expect(publications.records.has("retained")).toBe(false);
+    expect(assets.files.has(pathA)).toBe(false);
+  });
+
+  it.each([false, true])(
+    "refuses explicit removal with an active task (retained: %s)",
+    async (retained) => {
+      const record = publication("active-task", { path: pathA, retained });
+      const { assets, maintenance, publications } = fixture(
+        [record],
+        [[pathA, 60]],
+        new Set(["active-task"]),
+      );
+
+      await expect(
+        maintenance.removePublication("active-task"),
+      ).rejects.toThrow("active publication archive");
+      expect(publications.get("active-task")).toEqual(record);
+      expect(assets.files.has(pathA)).toBe(true);
+    },
+  );
+
   it("supports retention pins and refuses to remove active archives", async () => {
     const active = publication("active", { path: pathA, state: "verifying" });
     const terminal = publication("terminal", { path: pathB });
@@ -242,5 +304,21 @@ describe("PublicationArchiveMaintenance", () => {
     await expect(maintenance.removePublication("active")).rejects.toThrow(
       "active publication archive",
     );
+  });
+
+  it("passes active task facts to the domain cleanup query", async () => {
+    const terminal = publication("terminal", { path: pathA });
+    const { maintenance, publications } = fixture(
+      [terminal],
+      [[pathA, 60]],
+      new Set([terminal.publication.id]),
+    );
+
+    await expect(
+      maintenance.cleanup({
+        retentionBefore: new Date("2026-09-01T00:00:00.000Z"),
+      }),
+    ).resolves.toMatchObject({ removedPublicationIds: [] });
+    expect(publications.records.has(terminal.publication.id)).toBe(true);
   });
 });

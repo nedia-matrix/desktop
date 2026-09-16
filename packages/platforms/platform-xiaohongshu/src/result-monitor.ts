@@ -3,7 +3,7 @@ import {
   type PublishMonitorContext,
   type PublishResultEvent,
   type PublishResultMonitor,
-} from "@nedia-matrix/platform-core";
+} from "@nedia-matrix/platform-sdk";
 
 import {
   classifyXiaohongshuPublishResponse,

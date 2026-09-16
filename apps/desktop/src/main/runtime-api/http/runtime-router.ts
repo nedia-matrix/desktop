@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { DesktopUseCases } from "../../application/desktop-application.js";
+import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
 import { RuntimeBindingVerifier } from "../application/runtime-binding-verifier.js";
 import { RuntimeEventBuffer } from "../events/runtime-event-buffer.js";
 import { runtimePublicationEvent } from "../mapping/runtime-publication-mapper.js";
@@ -39,7 +39,7 @@ export class RuntimeRouter {
   private readonly publicationRoutes: RuntimePublicationRoutes;
 
   constructor(
-    private readonly application: DesktopUseCases,
+    private readonly application: NediaMatrixUseCases,
     private readonly handshake: LocalRuntimeHandshake,
   ) {
     const bindingVerifier = new RuntimeBindingVerifier(application);
@@ -84,7 +84,7 @@ export class RuntimeRouter {
       return true;
     }
     if (request.method === "GET" && url.pathname === "/v1/platforms") {
-      writeJson(response, 200, this.application.accounts.listPlatforms());
+      writeJson(response, 200, this.application.platformSummaries());
       return true;
     }
     if (request.method === "POST" && url.pathname === "/v1/publications") {
@@ -134,11 +134,15 @@ export class RuntimeRouter {
       return true;
     }
     const bindingVerificationMatch =
-      /^\/v1\/account-bindings\/([A-Za-z0-9._~-]{1,128})\/verify$/.exec(
+      /^\/v1\/account-bindings\/([A-Za-z0-9._~-]{1,128})\/(verify|refresh)$/.exec(
         url.pathname,
       );
     if (request.method === "POST" && bindingVerificationMatch?.[1]) {
-      void this.bindingRoutes.verify(response, bindingVerificationMatch[1]);
+      void this.bindingRoutes.verify(
+        response,
+        bindingVerificationMatch[1],
+        bindingVerificationMatch[2] === "refresh",
+      );
       return true;
     }
     return false;

@@ -4,7 +4,8 @@ import type {
   ElementReference,
   LocatorCandidate,
   SessionProbeClient,
-} from "@nedia-matrix/automation-contracts";
+  AutomationTraceEvent,
+} from "../src/index.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -277,10 +278,72 @@ describe("automation definitions and execution", () => {
       },
     });
   });
+
+  it("reports an ordered, value-free workflow trace", async () => {
+    const workflow = defineWorkflow({
+      id: "publish.prepare",
+      page,
+      steps: [{ kind: "fill", targetId: "body", inputKey: "body" }],
+    });
+    const driver = new MemoryDriver();
+    const events: AutomationTraceEvent[] = [];
+    let time = 0;
+
+    await executeWorkflow(
+      workflow,
+      driver,
+      { body: "不能写进日志的正文" },
+      {
+        trace: {
+          executionId: "execution-1",
+          report: (event) => events.push(event),
+        },
+        monotonicNow: () => time++,
+      },
+    );
+
+    expect(events.map(({ type }) => type)).toEqual([
+      "workflow.started",
+      "step.started",
+      "target.resolved",
+      "step.completed",
+      "workflow.completed",
+    ]);
+    expect(events[0]).toMatchObject({
+      type: "workflow.started",
+      inputs: { body: { kind: "text", length: 9 } },
+    });
+    expect(JSON.stringify(events)).not.toContain("不能写进日志的正文");
+  });
+
+  it("keeps diagnostics failures outside workflow behavior", async () => {
+    const workflow = defineWorkflow({
+      id: "publish.submit",
+      page,
+      steps: [{ kind: "click", targetId: "submit" }],
+    });
+    const driver = new MemoryDriver();
+
+    await executeWorkflow(
+      workflow,
+      driver,
+      {},
+      {
+        trace: {
+          executionId: "execution-1",
+          report: () => {
+            throw new Error("logger unavailable");
+          },
+        },
+      },
+    );
+
+    expect(driver.actions).toEqual(["click:submit"]);
+  });
 });
 
 describe("platform session detection", () => {
-  it("uses one ordered probe model and extracts account information", async () => {
+  it("uses one ordered probe model to extract account identity", async () => {
     const detection = defineSessionDetectionPlan({
       probes: [
         {
@@ -290,13 +353,6 @@ describe("platform session detection", () => {
             externalAccountId: ["data", "id"],
             nickname: ["data", "name"],
           },
-          accountInfo: [
-            {
-              key: "follower_count",
-              valuePath: ["data", "followers"],
-              valueType: "number",
-            },
-          ],
         },
       ],
     });
@@ -321,7 +377,6 @@ describe("platform session detection", () => {
       externalAccountId: "user-42",
       nickname: "测试账号",
       avatarUrl: null,
-      accountInfo: [{ key: "follower_count", value: 12 }],
       source: "api",
     });
   });

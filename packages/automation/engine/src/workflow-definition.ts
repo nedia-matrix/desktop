@@ -3,7 +3,7 @@ import type {
   AutomationWorkflow,
   WorkflowInputs,
   WorkflowStep,
-} from "@nedia-matrix/automation-contracts";
+} from "./index.js";
 import { z } from "zod";
 
 import { AutomationDefinitionError, AutomationError } from "./errors.js";

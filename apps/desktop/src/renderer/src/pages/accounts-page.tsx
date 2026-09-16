@@ -1,242 +1,215 @@
 import type {
   PlatformAccountInfoKey,
-  PlatformAccountSummary,
-  PlatformLoginEntrySummary,
-} from "@nedia-matrix/ipc-contracts";
+  PlatformAccountView,
+} from "@nedia-matrix/account-management";
+import type { PlatformContentSnapshot } from "@nedia-matrix/platform-content";
+import type { PlatformLoginEntrySummary } from "../../../bridge/contracts.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import type { AppContext } from "../app-context.js";
 import { Icon } from "../components/icons.js";
 import { PlatformIcon } from "../components/platform-icon.js";
 import {
-  accountLabel,
   accountStatus,
   errorMessage,
   formatTime,
   platformFor,
 } from "../shared.js";
+import { PlatformContentsPage } from "./platform-contents-page.js";
 
-export function AccountsPage({ context }: { context: AppContext }) {
-  const [accounts, setAccounts] = useState(context.accounts);
-  const [loading, setLoading] = useState(true);
-  const [showAddAccount, setShowAddAccount] = useState(false);
-  const [busyKey, setBusyKey] = useState<string>();
+export function AccountsPage({
+  context,
+  account,
+  onAccountsChanged,
+}: {
+  context: AppContext;
+  account?: PlatformAccountView;
+  onAccountsChanged(
+    accounts: readonly PlatformAccountView[],
+    preferredAccountId?: string,
+  ): void;
+}) {
+  const [activeTab, setActiveTab] = useState<"overview" | "contents">(
+    "overview",
+  );
+  const [busyAction, setBusyAction] = useState<
+    "open" | "refresh" | "contents" | "delete"
+  >();
+  const [contentRefreshToken, setContentRefreshToken] = useState(0);
 
-  const loadAccounts = async () => {
-    const refreshed = await context.refreshAccounts();
-    setAccounts(refreshed);
+  useEffect(() => setActiveTab("overview"), [account?.id]);
+
+  if (!account) {
+    return (
+      <section class="empty-workspace account-empty-workspace">
+        <span class="empty-workspace-icon">
+          <Icon name="accounts" size={24} />
+        </span>
+        <h2>添加第一个平台账号</h2>
+        <p>账号会显示在左侧，资料、内容和相关操作都从账号出发。</p>
+      </section>
+    );
+  }
+
+  const platform = platformFor(context.platforms, account.platformId);
+  const accountName = account.nickname ?? account.displayName;
+
+  const runAction = async (action: "open" | "refresh" | "delete") => {
+    setBusyAction(action);
+    try {
+      if (action === "open") {
+        context.setStatus(`正在打开 ${accountName}…`, "busy");
+        await window.matrix.openPlatformAccount({ accountId: account.id });
+        context.setStatus("平台窗口已打开，账号信息将在识别后更新");
+        return;
+      }
+      if (action === "refresh") {
+        context.setStatus("正在从平台刷新账号资料…", "busy");
+        await window.matrix.refreshPlatformAccountProfile({ accountId: account.id });
+        const refreshed = await context.refreshAccounts();
+        onAccountsChanged(refreshed, account.id);
+        context.setStatus("账号资料已更新");
+        return;
+      }
+      if (!globalThis.confirm(`删除“${accountName}”及其本地登录数据？`)) return;
+      context.setStatus("正在删除账号和本地 Session…", "busy");
+      await window.matrix.removePlatformAccount({ accountId: account.id });
+      const refreshed = await context.refreshAccounts();
+      onAccountsChanged(refreshed);
+      context.setStatus("账号和本地 Session 已删除");
+    } catch (error) {
+      context.setStatus(errorMessage(error, "账号操作失败"), "error");
+    } finally {
+      setBusyAction(undefined);
+    }
   };
 
-  useEffect(() => {
-    let active = true;
-    void context
-      .refreshAccounts()
-      .then((refreshed) => {
-        if (active) setAccounts(refreshed);
-      })
-      .catch((error) => {
-        context.setStatus(errorMessage(error, "账号加载失败"), "error");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
+  const synchronizeContents = async () => {
+    setBusyAction("contents");
+    context.setStatus("正在从平台同步作品和最新指标…", "busy");
+    try {
+      const run = await window.matrix.refreshPlatformContents({
+        accountId: account.id,
       });
-    const stopUpdates = context.onAccountUpdate((refreshed) => {
-      if (active) setAccounts(refreshed);
-    });
-    return () => {
-      active = false;
-      stopUpdates();
-    };
-  }, [context]);
+      setContentRefreshToken((current) => current + 1);
+      if (run.status === "failed") {
+        context.setStatus(run.diagnostics[0] ?? "平台作品同步失败", "error");
+      } else if (run.status === "partial") {
+        context.setStatus(
+          run.diagnostics[0] ?? `已读取 ${run.itemsRead} 条作品，结果不完整`,
+          "error",
+        );
+      } else {
+        context.setStatus(`已同步 ${run.itemsRead} 条平台作品`);
+      }
+    } catch (error) {
+      context.setStatus(errorMessage(error, "平台作品同步失败"), "error");
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
+  return (
+    <div class="account-workspace">
+      <header class="account-profile-header">
+        <AccountAvatar account={account} accountName={accountName} large />
+        <div class="account-profile-copy">
+          <div class="account-profile-name">
+            <h1>{accountName}</h1>
+            <span class={`status-badge account-${account.status}`}>
+              <span class="badge-dot" aria-hidden="true" />
+              {accountStatus(account)}
+            </span>
+          </div>
+          <p>
+            {platform?.displayName ?? account.platformId}
+            <span aria-hidden="true"> · </span>
+            {account.externalAccountId ?? "等待识别平台账号 ID"}
+          </p>
+        </div>
+        <div class="account-profile-actions">
+          <button class="secondary-button compact-button" type="button" disabled={busyAction !== undefined} onClick={() => void runAction("open")}>
+            <Icon name="arrow-up-right" size={16} />打开平台
+          </button>
+          <button class="secondary-button compact-button" type="button" disabled={busyAction !== undefined} onClick={() => void runAction("refresh")}>
+            <Icon name="refresh" size={16} />{busyAction === "refresh" ? "同步中" : "同步资料"}
+          </button>
+          <button class="secondary-button compact-button" type="button" disabled={busyAction !== undefined || account.status !== "authenticated"} onClick={() => void synchronizeContents()}>
+            <Icon name="content" size={16} />{busyAction === "contents" ? "同步中" : "同步作品"}
+          </button>
+          <AccountActionMenu account={account} disabled={busyAction !== undefined} onDelete={() => void runAction("delete")} />
+        </div>
+      </header>
+
+      <nav class="account-tabs" aria-label="账号内容">
+        <button class={activeTab === "overview" ? "active" : undefined} type="button" aria-current={activeTab === "overview" ? "page" : undefined} onClick={() => setActiveTab("overview")}>概览</button>
+        <button class={activeTab === "contents" ? "active" : undefined} type="button" aria-current={activeTab === "contents" ? "page" : undefined} onClick={() => setActiveTab("contents")}>平台内容</button>
+      </nav>
+
+      {activeTab === "overview" ? (
+        <AccountOverview account={account} context={context} refreshToken={contentRefreshToken} />
+      ) : (
+        <PlatformContentsPage context={context} fixedAccountId={account.id} refreshToken={contentRefreshToken} />
+      )}
+    </div>
+  );
+}
+
+export function AddAccountDialog({
+  context,
+  onClose,
+  onCreated,
+}: {
+  context: AppContext;
+  onClose(): void;
+  onCreated(accounts: readonly PlatformAccountView[], accountId: string): void;
+}) {
+  const [busyKey, setBusyKey] = useState<string>();
 
   const createAccount = async (
     platformId: string,
     platformName: string,
     loginEntry: PlatformLoginEntrySummary,
   ) => {
-    const operationKey = `create:${platformId}:${loginEntry.id}`;
+    const operationKey = `${platformId}:${loginEntry.id}`;
     setBusyKey(operationKey);
     context.setStatus(`正在创建 ${platformName} 独立 Session…`, "busy");
-    let account: PlatformAccountSummary | undefined;
     try {
-      account = await window.matrix.createPlatformAccount({ platformId });
-      await loadAccounts();
-      await window.matrix.openPlatformLogin({
-        accountId: account.id,
-        loginEntryId: loginEntry.id,
-      });
-      setShowAddAccount(false);
-      context.setStatus(
-        `已打开 ${platformName} 登录窗口，登录成功后将自动识别账号`,
-      );
+      const account = await window.matrix.createPlatformAccount({ platformId });
+      const refreshed = await context.refreshAccounts();
+      onCreated(refreshed, account.id);
+      await window.matrix.openPlatformLogin({ accountId: account.id, loginEntryId: loginEntry.id });
+      onClose();
+      context.setStatus(`已打开 ${platformName} 登录窗口，登录成功后将自动识别账号`);
     } catch (error) {
-      if (account) await loadAccounts();
       context.setStatus(errorMessage(error, "创建账号失败"), "error");
     } finally {
       setBusyKey(undefined);
     }
   };
 
-  const runAccountAction = async (
-    account: PlatformAccountSummary,
-    action: "open" | "refresh" | "delete",
-  ) => {
-    setBusyKey(`${action}:${account.id}`);
-    try {
-      if (action === "open") {
-        context.setStatus(
-          `正在打开 ${accountLabel(account, context.platforms)}…`,
-          "busy",
-        );
-        await window.matrix.openPlatformAccount({ accountId: account.id });
-        context.setStatus("平台窗口已打开，账号信息将在识别后更新");
-      } else if (action === "refresh") {
-        context.setStatus("正在从平台刷新账号信息…", "busy");
-        await window.matrix.refreshPlatformAccount({ accountId: account.id });
-        await loadAccounts();
-        context.setStatus("账号信息已刷新");
-      } else {
-        if (
-          !globalThis.confirm(
-            `删除“${accountLabel(account, context.platforms)}”及其本地登录数据？`,
-          )
-        ) {
-          return;
-        }
-        context.setStatus("正在删除账号和本地 Session…", "busy");
-        await window.matrix.removePlatformAccount({ accountId: account.id });
-        await loadAccounts();
-        context.setStatus("账号和本地 Session 已删除");
-      }
-    } catch (error) {
-      const fallback = action === "delete" ? "删除账号失败" : "账号操作失败";
-      context.setStatus(errorMessage(error, fallback), "error");
-    } finally {
-      setBusyKey(undefined);
-    }
-  };
-
   return (
-    <div class="page-stack">
-      <section class="page-toolbar" aria-label="账号操作">
-        <div class="toolbar-summary">
-          <strong>{accounts.length}</strong>
-          <span>个本地账号</span>
-          <span class="toolbar-separator" aria-hidden="true" />
-          <span>
-            {accounts.filter(({ status }) => status === "authenticated").length}{" "}
-            个已连接
-          </span>
-        </div>
-        <div class="toolbar-actions">
-          <button
-            class="secondary-button compact-button"
-            type="button"
-            disabled={busyKey === "refresh-all"}
-            onClick={async () => {
-              setBusyKey("refresh-all");
-              context.setStatus("正在刷新账号列表…", "busy");
-              try {
-                await loadAccounts();
-                context.setStatus("账号列表已刷新");
-              } catch (error) {
-                context.setStatus(errorMessage(error, "刷新失败"), "error");
-              } finally {
-                setBusyKey(undefined);
-              }
-            }}
-          >
-            <Icon name="refresh" size={16} />
-            刷新
-          </button>
-          <button
-            class="compact-button"
-            type="button"
-            onClick={() => setShowAddAccount((visible) => !visible)}
-          >
-            <Icon name="add" size={16} />
-            添加账号
-          </button>
-        </div>
-      </section>
-
-      {showAddAccount && (
-        <section class="add-account-panel" aria-labelledby="add-account-title">
-          <div>
-            <h2 id="add-account-title">选择要连接的平台</h2>
-            <p>每个账号使用独立的持久化浏览器 Session。</p>
-          </div>
-          <div class="platform-grid">
-            {context.platforms.flatMap((platform) =>
-              platform.loginEntries.map((entry) => {
-                const operationKey = `create:${platform.id}:${entry.id}`;
-                return (
-                  <button
-                    class="platform-option"
-                    type="button"
-                    key={operationKey}
-                    disabled={busyKey === operationKey}
-                    onClick={() =>
-                      void createAccount(
-                        platform.id,
-                        platform.displayName,
-                        entry,
-                      )
-                    }
-                  >
-                    <PlatformIcon
-                      platformId={platform.id}
-                      platformName={platform.displayName}
-                    />
-                    <span>
-                      <strong>{platform.displayName}</strong>
-                      <small>
-                        {platform.loginEntries.length > 1
-                          ? entry.displayName
-                          : "连接新账号"}
-                      </small>
-                    </span>
-                    <Icon name="arrow-up-right" size={16} />
-                  </button>
-                );
-              }),
-            )}
-          </div>
-        </section>
-      )}
-
-      <section class="data-surface" aria-labelledby="account-list-title">
-        <header class="surface-header">
-          <div>
-            <h2 id="account-list-title">账号列表</h2>
-            <p>平台资料、连接状态和内容数据会保存在本机。</p>
-          </div>
+    <div class="dialog-backdrop" role="presentation" onClick={onClose}>
+      <section class="account-dialog" role="dialog" aria-modal="true" aria-labelledby="add-account-title" onClick={(event) => event.stopPropagation()}>
+        <header class="dialog-header">
+          <div><h2 id="add-account-title">添加账号</h2><p>选择平台后，将打开独立的登录窗口。</p></div>
+          <button class="secondary-button compact-button" type="button" onClick={onClose}>取消</button>
         </header>
-        <div class="account-list-heading" aria-hidden="true">
-          <span>账号</span>
-          <span>平台</span>
-          <span>数据概览</span>
-          <span>最近同步</span>
-          <span>操作</span>
-        </div>
-        <div class="account-list" aria-live="polite">
-          {loading ? (
-            <EmptyState title="正在加载账号…" />
-          ) : accounts.length === 0 ? (
-            <EmptyState
-              title="还没有平台账号"
-              detail="点击“添加账号”连接第一个内容平台。"
-            />
-          ) : (
-            accounts.map((account) => (
-              <AccountRow
-                account={account}
-                context={context}
-                busyKey={busyKey}
-                key={account.id}
-                onAction={runAccountAction}
-              />
-            ))
+        <div class="platform-grid dialog-platform-grid">
+          {context.platforms.flatMap((platform) =>
+            platform.loginEntries.map((entry) => {
+              const operationKey = `${platform.id}:${entry.id}`;
+              return (
+                <button class="platform-option" type="button" key={operationKey} disabled={busyKey !== undefined} onClick={() => void createAccount(platform.id, platform.displayName, entry)}>
+                  <PlatformIcon platformId={platform.id} platformName={platform.displayName} />
+                  <span>
+                    <strong>{platform.displayName}</strong>
+                    <small>{busyKey === operationKey ? "正在创建…" : platform.loginEntries.length > 1 ? entry.displayName : "连接新账号"}</small>
+                  </span>
+                  <Icon name="arrow-up-right" size={16} />
+                </button>
+              );
+            }),
           )}
         </div>
       </section>
@@ -244,238 +217,88 @@ export function AccountsPage({ context }: { context: AppContext }) {
   );
 }
 
-function AccountRow({
-  account,
-  context,
-  busyKey,
-  onAction,
-}: {
-  account: PlatformAccountSummary;
-  context: AppContext;
-  busyKey: string | undefined;
-  onAction(
-    account: PlatformAccountSummary,
-    action: "open" | "refresh" | "delete",
-  ): Promise<void>;
-}) {
-  const platformName =
-    platformFor(context.platforms, account.platformId)?.displayName ??
-    account.platformId;
-  const accountName = account.nickname ?? account.displayName;
-  const followerCount = accountInformation(account, "follower_count");
-  const contentCount = accountInformation(account, "content_count");
-  const likeCount = accountInformation(account, "like_count");
-  const description = accountInformation(account, "desc");
-  const actionBusy = busyKey?.endsWith(account.id) ?? false;
-
-  return (
-    <article class="account-row">
-      <div class="account-identity">
-        <AccountAvatar account={account} accountName={accountName} />
-        <span class="account-name">
-          <strong>{accountName}</strong>
-          <small title={account.externalAccountId ?? undefined}>
-            {account.externalAccountId ?? "等待识别平台账号 ID"}
-          </small>
-          {description !== undefined && (
-            <small title={String(description)}>
-              {description}
-            </small>
-          )}
-        </span>
-      </div>
-      <div class="platform-cell">
-        <PlatformIcon
-          compact
-          platformId={account.platformId}
-          platformName={platformName}
-        />
-        <span>{platformName}</span>
-      </div>
-      <div class="account-metrics">
-        <Metric label="粉丝" value={followerCount} />
-        <Metric label="内容" value={contentCount} />
-        <Metric label="获赞" value={likeCount} />
-      </div>
-      <div class="account-sync">
-        <span class={`status-badge account-${account.status}`}>
-          <span class="badge-dot" aria-hidden="true" />
-          {accountStatus(account)}
-        </span>
-        <small>
-          {account.lastVerifiedAt
-            ? formatTime(account.lastVerifiedAt)
-            : "尚未同步"}
-        </small>
-      </div>
-      <div class="row-actions">
-        <button
-          class="secondary-button small-button"
-          type="button"
-          disabled={actionBusy}
-          onClick={() => void onAction(account, "open")}
-        >
-          打开平台
-        </button>
-        <AccountActionMenu
-          account={account}
-          disabled={actionBusy}
-          onAction={onAction}
-        />
-      </div>
-    </article>
-  );
-}
-
-function AccountActionMenu({
-  account,
-  disabled,
-  onAction,
-}: {
-  account: PlatformAccountSummary;
-  disabled: boolean;
-  onAction(
-    account: PlatformAccountSummary,
-    action: "open" | "refresh" | "delete",
-  ): Promise<void>;
-}) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuId = `account-actions-${account.id}`;
+function AccountOverview({ account, context, refreshToken }: { account: PlatformAccountView; context: AppContext; refreshToken: number }) {
+  const [contents, setContents] = useState<PlatformContentSnapshot[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!open) return;
-
-    menuRef.current
-      ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
-      ?.focus();
-
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (
-        event.target instanceof Node &&
-        !menuRef.current?.contains(event.target)
-      ) {
-        setOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      triggerRef.current?.focus();
-    };
-
-    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
-
-  const runAction = (action: "refresh" | "delete") => {
-    setOpen(false);
-    triggerRef.current?.focus();
-    void onAction(account, action);
-  };
+    let active = true;
+    setLoading(true);
+    void window.matrix.listPlatformContents({ accountId: account.id })
+      .then((result) => { if (active) setContents(result.items.slice(0, 4)); })
+      .catch((error) => { if (active) context.setStatus(errorMessage(error, "平台内容加载失败"), "error"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [account.id, context, refreshToken]);
 
   return (
-    <div class="action-menu" ref={menuRef}>
-      <button
-        class={`icon-button action-menu-trigger${open ? " active" : ""}`}
-        type="button"
-        ref={triggerRef}
-        disabled={disabled}
-        aria-label="更多账号操作"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((visible) => !visible)}
-      >
-        <Icon name="more" />
-      </button>
-      {open && (
-        <div class="action-menu-popover" id={menuId} role="menu">
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => runAction("refresh")}
-          >
-            <Icon name="refresh" size={15} />
-            刷新账号资料
-          </button>
-          <button
-            class="danger-menu-item"
-            type="button"
-            role="menuitem"
-            onClick={() => runAction("delete")}
-          >
-            <Icon name="delete" size={15} />
-            删除账号
-          </button>
-        </div>
-      )}
+    <div class="account-overview">
+      <section class="account-stat-grid" aria-label="账号数据概览">
+        <AccountStat label="粉丝" value={accountInformation(account, "follower_count")} />
+        <AccountStat label="获赞" value={accountInformation(account, "like_count")} />
+        <AccountStat label="内容" value={accountInformation(account, "content_count")} />
+      </section>
+      <section class="data-surface account-recent-content">
+        <header class="surface-header"><div><h2>最近内容</h2><p>该账号最近一次同步保存的平台作品。</p></div></header>
+        {loading ? <EmptyState title="正在加载平台内容…" /> : contents.length === 0 ? (
+          <EmptyState title="还没有平台内容" detail="切换到“平台内容”并执行同步。" />
+        ) : (
+          <div class="account-recent-list">
+            {contents.map((content) => (
+              <article class="account-recent-row" key={content.id}>
+                <span class="content-type-icon"><Icon name={content.contentType === "video" ? "video" : "image"} size={17} /></span>
+                <span class="account-recent-copy"><strong>{content.title ?? content.description ?? "未命名作品"}</strong><small>{content.externalContentId}</small></span>
+                <span class="account-recent-metrics">赞 {formatAccountInfoValue(content.metrics.likeCount ?? 0)} · 评 {formatAccountInfoValue(content.metrics.commentCount ?? 0)}</span>
+                <time>{formatTime(content.contentObservedAt)}</time>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
 
-function AccountAvatar({
-  account,
-  accountName,
-}: {
-  account: PlatformAccountSummary;
-  accountName: string;
-}) {
-  const [imageFailed, setImageFailed] = useState(false);
-  if (!account.avatarUrl?.trim() || imageFailed) {
-    return (
-      <span class="account-avatar account-avatar-fallback" aria-hidden="true">
-        {Array.from(accountName.trim())[0] ?? "账"}
-      </span>
-    );
-  }
+function AccountActionMenu({ account, disabled, onDelete }: { account: PlatformAccountView; disabled: boolean; onDelete(): void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close, true);
+    return () => document.removeEventListener("pointerdown", close, true);
+  }, [open]);
   return (
-    <img
-      class="account-avatar"
-      src={account.avatarUrl.trim()}
-      alt=""
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      onError={() => setImageFailed(true)}
-    />
+    <div class="action-menu" ref={menuRef}>
+      <button class={`icon-button action-menu-trigger${open ? " active" : ""}`} type="button" disabled={disabled} aria-label={`更多 ${account.nickname ?? account.displayName} 操作`} aria-expanded={open} onClick={() => setOpen((visible) => !visible)}><Icon name="more" /></button>
+      {open && <div class="action-menu-popover" role="menu"><button class="danger-menu-item" type="button" role="menuitem" onClick={() => { setOpen(false); onDelete(); }}><Icon name="delete" size={15} />删除账号</button></div>}
+    </div>
   );
 }
 
-function Metric({ label, value }: { label: string; value?: string | number }) {
-  return (
-    <span>
-      <strong>
-        {value === undefined ? "—" : formatAccountInfoValue(value)}
-      </strong>
-      <small>{label}</small>
-    </span>
-  );
+export function AccountAvatar({ account, accountName, large = false }: { account: PlatformAccountView; accountName: string; large?: boolean }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const className = `account-avatar${large ? " account-avatar-large" : ""}`;
+  if (!account.avatarUrl?.trim() || imageFailed) {
+    return <span class={`${className} account-avatar-fallback`} aria-hidden="true">{Array.from(accountName.trim())[0] ?? "账"}</span>;
+  }
+  return <img class={className} src={account.avatarUrl.trim()} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setImageFailed(true)} />;
+}
+
+function AccountStat({ label, value }: { label: string; value?: string | number }) {
+  return <div class="account-stat"><small>{label}</small><strong>{value === undefined ? "—" : formatAccountInfoValue(value)}</strong></div>;
 }
 
 function EmptyState({ title, detail }: { title: string; detail?: string }) {
-  return (
-    <div class="empty-state">
-      <strong>{title}</strong>
-      {detail && <p>{detail}</p>}
-    </div>
-  );
+  return <div class="empty-state"><strong>{title}</strong>{detail && <p>{detail}</p>}</div>;
 }
 
-function accountInformation(
-  account: PlatformAccountSummary,
-  key: PlatformAccountInfoKey,
-): string | number | undefined {
+function accountInformation(account: PlatformAccountView, key: PlatformAccountInfoKey): string | number | undefined {
   return account.accountInfo?.find((item) => item.key === key)?.value;
 }
 
 function formatAccountInfoValue(value: string | number): string {
-  return typeof value === "number"
-    ? new Intl.NumberFormat("zh-CN", { notation: "compact" }).format(value)
-    : value;
+  return typeof value === "number" ? new Intl.NumberFormat("zh-CN", { notation: "compact" }).format(value) : value;
 }

@@ -1,7 +1,7 @@
-import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
+import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
 
 export function toRuntimeAccountSession(
-  account: PlatformAccountSummary,
+  account: PlatformAccountSnapshot,
   replacementAlias?: { candidateAccountId: string },
 ) {
   return {

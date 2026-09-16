@@ -16,8 +16,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@nedia-matrix/automation-contracts": "workspace:*",
-    "@nedia-matrix/platform-core": "workspace:*",
+    "@nedia-matrix/automation-engine": "workspace:*",
+    "@nedia-matrix/platform-sdk": "workspace:*",
     "playwright": "^1.62.1"
   },
   "devDependencies": {

@@ -3,9 +3,16 @@ import {
   defineSessionDetectionPlan,
   defineWorkflow,
 } from "@nedia-matrix/automation-engine";
-import { definePlatformModule } from "@nedia-matrix/platform-core";
+import {
+  definePlatformModule,
+  submissionModes,
+} from "@nedia-matrix/platform-sdk";
 
 import { createKuaishouPublishResultMonitor } from "./result-monitor.js";
+import {
+  kuaishouAccountProfileCapability,
+  kuaishouContentCapability,
+} from "./data-reader.js";
 
 const profilePage = defineAutomationPage({
   id: "profile",
@@ -208,33 +215,12 @@ const sessionDetection = defineSessionDetectionPlan({
         kind: "observed-response",
         method: "POST",
         url: "https://cp.kuaishou.com/rest/cp/creator/pc/home/userInfo",
-        timeoutMs: 1_500,
+        timeoutMs: 10_000,
       },
       fields: {
         externalAccountId: ["data", "coreUserInfo", "userId"],
         nickname: ["data", "coreUserInfo", "userName"],
         avatarUrl: ["data", "coreUserInfo", "headUrl"],
-      },
-      accountInfo: [
-        {
-          key: "follower_count",
-          valuePath: ["data", "coreUserInfo", "fansNum"],
-          valueType: "number",
-        },
-      ],
-    },
-    {
-      identityScheme: "kuaishou.user_id",
-      source: {
-        kind: "observed-response",
-        method: "POST",
-        url: "https://cp.kuaishou.com/rest/v2/creator/pc/authority/account/current",
-        timeoutMs: 1_500,
-      },
-      fields: {
-        externalAccountId: ["data", "userId"],
-        nickname: ["data", "userName"],
-        avatarUrl: ["data", "userAvatar"],
       },
     },
   ],
@@ -253,6 +239,11 @@ export const kuaishouPlatformModule = definePlatformModule({
   displayName: "快手",
   rulesVersion: "1.3.0-title-body-constraints",
   browser: {
+    sessionCapabilities: {
+      isolatedPages: true,
+      parallelSync: true,
+      headlessSync: true,
+    },
     startUrl: "https://cp.kuaishou.com/profile",
     allowedHostSuffixes: ["kuaishou.com"],
   },
@@ -268,6 +259,8 @@ export const kuaishouPlatformModule = definePlatformModule({
     ],
     detection: sessionDetection,
   },
+  accountProfile: kuaishouAccountProfileCapability,
+  content: kuaishouContentCapability,
   publishing: {
     implementationStatus: "live-tested",
     forms: {
@@ -278,7 +271,7 @@ export const kuaishouPlatformModule = definePlatformModule({
           mediaMaxCount: 1,
         },
         tagPolicy: { placement: "inline" },
-        submissionModes: ["automatic", "manual_confirmation"],
+        submissionModes,
         descriptionComposition: { parts: ["title", "body"], separator: " " },
         automation: { prepare: prepareVideo, submit },
       },
@@ -289,7 +282,7 @@ export const kuaishouPlatformModule = definePlatformModule({
           mediaMaxCount: 31,
         },
         tagPolicy: { placement: "inline" },
-        submissionModes: ["automatic", "manual_confirmation"],
+        submissionModes,
         descriptionComposition: { parts: ["title", "body"], separator: " " },
         automation: {
           prepare: prepareImageText,

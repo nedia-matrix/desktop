@@ -1,7 +1,4 @@
-import type {
-  AutomationPage,
-  ConditionDefinition,
-} from "@nedia-matrix/automation-contracts";
+import type { AutomationPage, ConditionDefinition } from "./index.js";
 import { z } from "zod";
 
 import {

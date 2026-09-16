@@ -1,13 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { DesktopUseCases } from "../../../application/desktop-application.js";
+import type { NediaMatrixUseCases } from "../../../application/nedia-matrix-application.js";
 import { RuntimeBindingVerifier } from "../../application/runtime-binding-verifier.js";
 import { toRuntimeAccountSession } from "../../mapping/runtime-account-mapper.js";
 import { readJsonRequest, writeJson } from "../http-json.js";
 
 export class RuntimeBindingRoutes {
   constructor(
-    private readonly application: DesktopUseCases,
+    private readonly application: NediaMatrixUseCases,
     private readonly verifier: RuntimeBindingVerifier,
   ) {}
 
@@ -40,10 +40,15 @@ export class RuntimeBindingRoutes {
   async verify(
     response: ServerResponse,
     platformAccountId: string,
+    notifyOnSuccess = false,
   ): Promise<void> {
     try {
-      const { account, binding } =
-        await this.verifier.verify(platformAccountId);
+      const { account, binding } = await this.verifier.verify(
+        platformAccountId,
+        undefined,
+        undefined,
+        notifyOnSuccess,
+      );
       writeJson(response, 200, {
         binding,
         session: toRuntimeAccountSession(account),

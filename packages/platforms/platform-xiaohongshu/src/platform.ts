@@ -3,9 +3,16 @@ import {
   defineSessionDetectionPlan,
   defineWorkflow,
 } from "@nedia-matrix/automation-engine";
-import { definePlatformModule } from "@nedia-matrix/platform-core";
+import {
+  definePlatformModule,
+  submissionModes,
+} from "@nedia-matrix/platform-sdk";
 
 import { createXiaohongshuPublishResultMonitor } from "./result-monitor.js";
+import {
+  xiaohongshuAccountProfileCapability,
+  xiaohongshuContentCapability,
+} from "./data-reader.js";
 
 const homePage = defineAutomationPage({
   id: "home",
@@ -266,23 +273,6 @@ const sessionDetection = defineSessionDetectionPlan({
         nickname: ["data", "name"],
         avatarUrl: ["data", "avatar"],
       },
-      accountInfo: [
-        {
-          key: "desc",
-          valuePath: ["data", "personal_desc"],
-          valueType: "string",
-        },
-        {
-          key: "follower_count",
-          valuePath: ["data", "fans_count"],
-          valueType: "number",
-        },
-        {
-          key: "like_count",
-          valuePath: ["data", "faved_count"],
-          valueType: "number",
-        },
-      ],
     },
   ],
 });
@@ -292,6 +282,11 @@ export const xiaohongshuPlatformModule = definePlatformModule({
   displayName: "小红书",
   rulesVersion: "1.2.0-publish-constraints",
   browser: {
+    sessionCapabilities: {
+      isolatedPages: true,
+      parallelSync: true,
+      headlessSync: true,
+    },
     startUrl: "https://creator.xiaohongshu.com/new/home",
     allowedHostSuffixes: ["xiaohongshu.com"],
   },
@@ -307,6 +302,8 @@ export const xiaohongshuPlatformModule = definePlatformModule({
     ],
     detection: sessionDetection,
   },
+  accountProfile: xiaohongshuAccountProfileCapability,
+  content: xiaohongshuContentCapability,
   publishing: {
     implementationStatus: "live-tested",
     forms: {
@@ -317,7 +314,7 @@ export const xiaohongshuPlatformModule = definePlatformModule({
           mediaMaxCount: 1,
         },
         tagPolicy: { placement: "new-lines" },
-        submissionModes: ["automatic", "manual_confirmation"],
+        submissionModes,
         automation: { prepare: prepareVideo, submit },
       },
       imageText: {
@@ -327,7 +324,7 @@ export const xiaohongshuPlatformModule = definePlatformModule({
           mediaMaxCount: 18,
         },
         tagPolicy: { placement: "new-lines" },
-        submissionModes: ["automatic", "manual_confirmation"],
+        submissionModes,
         automation: { prepare: prepareImageText, submit },
       },
     },

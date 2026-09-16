@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AccountPublicationLock } from "../src/main/publishing/application/account-publication-lock.js";
+import { AccountPublicationLock } from "@nedia-matrix/publishing";
 
 describe("AccountPublicationLock", () => {
   it("allows only one active publication per account", () => {

@@ -1,7 +1,7 @@
 import type {
   PublicationStatus,
   PublicationSummary,
-} from "@nedia-matrix/ipc-contracts";
+} from "@nedia-matrix/publishing";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
 import type { AppContext } from "../app-context.js";
@@ -201,17 +201,44 @@ function PublicationRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [traceId, setTraceId] = useState<string | null | undefined>(undefined);
   const account = accounts.find(({ id }) => id === publication.accountId);
   const platform = context.platforms.find(
     ({ id }) => id === publication.platformId,
   );
 
-  const runAction = async (action: "copy" | "open") => {
+  useEffect(() => {
+    if (
+      !expanded ||
+      traceId !== undefined ||
+      !["failed", "uncertain"].includes(publication.state)
+    ) {
+      return;
+    }
+    let active = true;
+    void window.matrix
+      .findAutomationTrace({ publicationId: publication.id })
+      .then((result) => {
+        if (active) setTraceId(result?.traceId ?? null);
+      })
+      .catch(() => {
+        if (active) setTraceId(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [expanded, publication.id, publication.state, traceId]);
+
+  const runAction = async (action: "copy" | "open" | "review") => {
     setBusy(true);
     try {
       if (action === "copy" && publication.platformContentId) {
         await navigator.clipboard.writeText(publication.platformContentId);
         context.setStatus("作品 ID 已复制");
+      } else if (action === "review") {
+        await window.matrix.openPublicationReview({
+          publicationId: publication.id,
+        });
       } else if (action === "open") {
         await window.matrix.openPublication({ publicationId: publication.id });
       }
@@ -259,6 +286,21 @@ function PublicationRow({
         <small>创建于 {formatTime(publication.createdAt)}</small>
       </div>
       <div class="row-actions">
+        {[
+          "preparing",
+          "awaiting_confirmation",
+          "submitting",
+          "verifying",
+        ].includes(publication.state) && (
+          <button
+            class="secondary-button small-button"
+            type="button"
+            disabled={busy}
+            onClick={() => void runAction("review")}
+          >
+            打开任务页面
+          </button>
+        )}
         {publication.platformContentUrl && (
           <button
             class="secondary-button small-button"
@@ -286,6 +328,31 @@ function PublicationRow({
             <span>最近消息</span>
             <p>{publication.lastMessage ?? "平台未返回附加消息。"}</p>
           </div>
+          {["failed", "uncertain"].includes(publication.state) && (
+            <div class="content-detail-block">
+              <span>诊断编号</span>
+              <p>
+                {traceId === undefined
+                  ? "正在查询…"
+                  : traceId
+                    ? traceId
+                    : "诊断日志已过期或不可用"}
+              </p>
+              {traceId && (
+                <button
+                  class="text-button"
+                  type="button"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(traceId);
+                    context.setStatus("诊断编号已复制");
+                  }}
+                >
+                  <Icon name="copy" size={14} />
+                  复制
+                </button>
+              )}
+            </div>
+          )}
           <div class="content-detail-block">
             <span>平台作品 ID</span>
             <p>{publication.platformContentId ?? "尚未生成"}</p>

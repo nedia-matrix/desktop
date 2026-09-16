@@ -2,7 +2,7 @@ import type {
   ObservedHttpResponse,
   PublishMonitorContext,
   PublishResultEvent,
-} from "@nedia-matrix/platform-core";
+} from "@nedia-matrix/platform-sdk";
 import { describe, expect, it, vi } from "vitest";
 
 import { createKuaishouPublishResultMonitor } from "../src/result-monitor.js";

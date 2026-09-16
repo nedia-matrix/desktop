@@ -2,17 +2,15 @@ import { request as httpRequest } from "node:http";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type {
-  PlatformAccountSummary,
-  PublicationSummary,
-} from "@nedia-matrix/ipc-contracts";
+import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
+import type { PublicationSummary } from "@nedia-matrix/publishing";
 
 import {
   LocalRuntimeHttpServer,
   type LocalRuntimeHandshake,
 } from "../src/main/runtime-api/http/local-runtime-http-server.js";
-import { AccountReplacedError } from "../src/main/accounts/application/account-service.js";
-import type { RuntimeAccountBinding } from "../src/main/runtime-api/infrastructure/electron-runtime-binding-repository.js";
+import { AccountReplacedError } from "@nedia-matrix/account-management";
+import type { RuntimeAccountBinding } from "../src/main/runtime-api/application/runtime-account-binding-service.js";
 
 const origin = "https://www.example.com";
 
@@ -55,7 +53,7 @@ const handshake: LocalRuntimeHandshake = {
   },
 };
 
-const account: PlatformAccountSummary = {
+const account: PlatformAccountSnapshot = {
   id: "account-1",
   platformId: "douyin",
   profileId: "matrix-douyin-account-1",
@@ -66,6 +64,7 @@ const account: PlatformAccountSummary = {
   nickname: "测试账号",
   avatarUrl: "https://example.com/avatar.png",
   accountInfo: [{ key: "follower_count", value: 12800 }],
+  profileSyncedAt: null,
   status: "authenticated",
   lastVerifiedAt: "2026-08-10T00:00:00.000Z",
   createdAt: "2026-08-10T00:00:00.000Z",
@@ -104,7 +103,7 @@ function createAccountBindings() {
 }
 
 function createRuntimeApplication(
-  initialAccounts: PlatformAccountSummary[] = [account],
+  initialAccounts: PlatformAccountSnapshot[] = [account],
   options?: {
     publicationBusy?: boolean;
     verificationMismatch?: boolean;
@@ -200,7 +199,7 @@ function createRuntimeApplication(
     },
     createAccount: ({ platformId }: { platformId: string }) => {
       if (platformId !== "douyin") throw new TypeError("Unknown platform");
-      const created: PlatformAccountSummary = {
+      const created: PlatformAccountSnapshot = {
         ...account,
         id: `account-${accounts.length + 1}`,
         lifecycle: "pending_identity",
@@ -283,8 +282,15 @@ function createRuntimeApplication(
     publications,
     accountBindings,
     application: {
+      platforms: {
+        get: () => undefined,
+        require: () => {
+          throw new TypeError("not used");
+        },
+        list: () => [],
+      },
+      platformSummaries: legacyApplication.listPlatforms,
       accounts: {
-        listPlatforms: legacyApplication.listPlatforms,
         list: legacyApplication.listAccounts,
         resolve: ({ accountId }: { accountId: string }) =>
           resolveAccount(accountId),

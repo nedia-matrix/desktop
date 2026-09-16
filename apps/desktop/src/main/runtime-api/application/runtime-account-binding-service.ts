@@ -1,14 +1,14 @@
-import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
+import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
+import type { AccountService } from "@nedia-matrix/account-management";
+import {
+  AccountBindingVerificationError,
+  RuntimeAccountBindingService as ContextRuntimeAccountBindingService,
+  type RuntimeAccountBindingServiceDependencies as ContextDependencies,
+  type RuntimeAccountBindingSnapshot,
+} from "@nedia-matrix/runtime-account-binding";
 
-import type { AccountService } from "../../accounts/public.js";
-
-export interface RuntimeAccountBinding {
-  platformAccountId: string;
-  runtimeAccountId: string;
-  platform: string;
-  externalAccountId: string;
-  boundAt: string;
-}
+export { AccountBindingVerificationError } from "@nedia-matrix/runtime-account-binding";
+export type RuntimeAccountBinding = RuntimeAccountBindingSnapshot;
 
 export interface BindAccountCommand {
   platformAccountId: string;
@@ -22,24 +22,11 @@ export interface VerifyAccountBindingQuery {
 }
 
 export interface VerifiedAccountBinding {
-  account: PlatformAccountSummary;
+  account: PlatformAccountSnapshot;
   binding: RuntimeAccountBinding;
 }
 
-export class AccountBindingVerificationError extends Error {
-  constructor(
-    readonly code: "ACCOUNT_IDENTITY_MISMATCH" | "NOT_LOGGED_IN",
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-interface AccountBindingsPort {
-  list(): RuntimeAccountBinding[];
-  put(binding: RuntimeAccountBinding): void;
-  removeForRuntimeAccount(runtimeAccountId: string): void;
-}
+type AccountBindingsPort = ContextDependencies["accountBindings"];
 type AccountsPort = Pick<
   AccountService,
   "listAccounts" | "resolveAccount" | "verifyAccount"
@@ -52,106 +39,71 @@ export interface RuntimeAccountBindingServiceDependencies {
 }
 
 export class RuntimeAccountBindingService {
-  private readonly now: () => Date;
+  private readonly context: ContextRuntimeAccountBindingService;
 
   constructor(
     private readonly dependencies: RuntimeAccountBindingServiceDependencies,
   ) {
-    this.now = dependencies.now ?? (() => new Date());
+    this.context = new ContextRuntimeAccountBindingService({
+      accountBindings: dependencies.accountBindings,
+      accounts: {
+        listAccounts: () =>
+          dependencies.accounts.listAccounts().map(toRuntimeAccountView),
+        resolveAccount: (runtimeAccountId) =>
+          toRuntimeAccountView(
+            dependencies.accounts.resolveAccount({
+              accountId: runtimeAccountId,
+            }).account,
+          ),
+        verifyAccount: async (runtimeAccountId) => {
+          const result = await dependencies.accounts.verifyAccount({
+            accountId: runtimeAccountId,
+          });
+          return result.status === "unknown"
+            ? { status: "unknown" as const, reason: result.reason }
+            : { status: result.status };
+        },
+      },
+      now: dependencies.now,
+    });
   }
 
   list(): RuntimeAccountBinding[] {
-    return this.dependencies.accountBindings.list();
+    return this.context.list();
   }
 
   bind(command: BindAccountCommand): RuntimeAccountBinding {
-    const account = this.dependencies.accounts.resolveAccount({
-      accountId: command.runtimeAccountId,
-    }).account;
-    if (!account.externalAccountId) {
-      throw new TypeError("Runtime account does not have a stable identity");
-    }
-
-    const binding: RuntimeAccountBinding = {
-      platformAccountId: command.platformAccountId,
-      runtimeAccountId: account.id,
-      platform: account.platformId,
-      externalAccountId: account.externalAccountId,
-      boundAt: this.now().toISOString(),
-    };
-    this.dependencies.accountBindings.put(binding);
-    return binding;
+    return this.context.bind({
+      externalAccountReference: command.platformAccountId,
+      localAccountId: command.runtimeAccountId,
+    });
   }
 
   async verify(
     query: VerifyAccountBindingQuery,
   ): Promise<VerifiedAccountBinding> {
-    const binding = this.dependencies.accountBindings
-      .list()
-      .find(
-        (candidate) => candidate.platformAccountId === query.platformAccountId,
-      );
-    if (!binding) {
-      throw new AccountBindingVerificationError(
-        "ACCOUNT_IDENTITY_MISMATCH",
-        "Account binding does not exist",
-      );
-    }
-    if (
-      (query.runtimeAccountId !== undefined &&
-        query.runtimeAccountId !== binding.runtimeAccountId) ||
-      (query.platform !== undefined && query.platform !== binding.platform)
-    ) {
-      throw new AccountBindingVerificationError(
-        "ACCOUNT_IDENTITY_MISMATCH",
-        "Publication target does not match account binding",
-      );
-    }
-
-    const detected = await this.dependencies.accounts.verifyAccount({
-      accountId: binding.runtimeAccountId,
+    const result = await this.context.verify({
+      externalAccountReference: query.platformAccountId,
+      expectedLocalAccountId: query.runtimeAccountId,
+      expectedPlatformId: query.platform,
     });
-    if (detected.status === "login_required") {
-      throw new AccountBindingVerificationError(
-        "NOT_LOGGED_IN",
-        "Runtime account is not authenticated",
-      );
-    }
-    if (detected.status === "unknown") {
-      throw new AccountBindingVerificationError(
-        "ACCOUNT_IDENTITY_MISMATCH",
-        detected.reason,
-      );
-    }
-
-    const account = this.requireAccount(binding.runtimeAccountId);
-    if (account.status !== "authenticated") {
-      throw new AccountBindingVerificationError(
-        "NOT_LOGGED_IN",
-        "Runtime account is not authenticated",
-      );
-    }
-    if (
-      account.platformId !== binding.platform ||
-      account.externalAccountId !== binding.externalAccountId
-    ) {
-      throw new AccountBindingVerificationError(
-        "ACCOUNT_IDENTITY_MISMATCH",
-        "Runtime account identity does not match the binding",
-      );
-    }
-    return { account, binding };
+    const account = this.dependencies.accounts
+      .listAccounts()
+      .find((candidate) => candidate.id === result.account.id);
+    if (!account) throw new TypeError("Runtime account does not exist");
+    return { account, binding: result.binding };
   }
 
   removeForRuntimeAccount(runtimeAccountId: string): void {
-    this.dependencies.accountBindings.removeForRuntimeAccount(runtimeAccountId);
+    this.context.removeForRuntimeAccount(runtimeAccountId);
   }
+}
 
-  private requireAccount(accountId: string): PlatformAccountSummary {
-    const account = this.dependencies.accounts
-      .listAccounts()
-      .find((candidate) => candidate.id === accountId);
-    if (!account) throw new TypeError("Runtime account does not exist");
-    return account;
-  }
+function toRuntimeAccountView(account: PlatformAccountSnapshot) {
+  return {
+    id: account.id,
+    platformId: account.platformId,
+    status: account.status,
+    externalAccountId: account.externalAccountId,
+  };
 }

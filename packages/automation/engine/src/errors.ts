@@ -1,4 +1,4 @@
-import type { EvidenceReference } from "@nedia-matrix/automation-contracts";
+import type { EvidenceReference } from "./driver.js";
 
 export interface AutomationFailureDetails {
   code:

@@ -9,6 +9,7 @@ function fakeAdapter() {
   const cdpEvents = new EventEmitter();
   const bufferedBodies = new Map<string, string>();
   const cdp = Object.assign(cdpEvents, {
+    detach: vi.fn(async () => undefined),
     send: vi.fn(async (method: string, parameters?: { requestId?: string }) => {
       if (method === "Network.getResponseBody") {
         const text = bufferedBodies.get(parameters?.requestId ?? "") ?? "";
@@ -36,6 +37,29 @@ function fakeAdapter() {
 }
 
 describe("Playwright publish observation adapter", () => {
+  it("settles unfinished response bodies when the page closes", async () => {
+    const fake = fakeAdapter();
+    const session = await fake.create();
+    let body: Promise<string> | undefined;
+    session.responses.subscribe((response) => {
+      body = response.readText(100);
+    });
+    fake.cdpEvents.emit("Network.responseReceived", {
+      requestId: "pending",
+      response: {
+        url: "https://example.test/publish",
+        status: 200,
+        headers: {},
+      },
+    });
+    const rejected = expect(body).rejects.toThrow("could not be read");
+    fake.pageEvents.emit("close");
+    await rejected;
+    await session.dispose();
+    await session.dispose();
+    expect(fake.pageEvents.listenerCount("close")).toBe(0);
+  });
+
   it("adapts bounded responses, page text queries, and close events", async () => {
     const fake = fakeAdapter();
     const session = await fake.create();

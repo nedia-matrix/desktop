@@ -1,171 +1,312 @@
 import { EventEmitter } from "node:events";
-
-import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
-import type { PlatformModule } from "@nedia-matrix/platform-core";
 import { describe, expect, it, vi } from "vitest";
-
+import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
+import type { PlatformModule } from "@nedia-matrix/platform-sdk";
 import { PlaywrightBrowserSessionHost } from "../src/main/accounts/infrastructure/playwright-browser-session-host.js";
 
 const account = {
   id: "account-1",
-  platformId: "douyin",
-  profileId: "matrix-douyin-account-1",
-} as PlatformAccountSummary;
-
+  profileId: "matrix-account-1",
+  externalAccountId: "external-1",
+  identityScheme: "mock.id",
+} as PlatformAccountSnapshot;
 const platform = {
-  id: "douyin",
   browser: {
-    startUrl: "https://creator.douyin.com",
-    allowedHostSuffixes: ["douyin.com"],
+    startUrl: "https://creator.example.test",
+    allowedHostSuffixes: ["example.test"],
+    sessionCapabilities: {
+      isolatedPages: true,
+      parallelSync: true,
+      headlessSync: true,
+    },
   },
   accounts: { detection: { probes: [] } },
-} as PlatformModule;
-
-function fakeOpenedSession() {
-  const context = new EventEmitter();
-  const close = vi.fn(async () => {
-    context.emit("close");
+} as unknown as PlatformModule;
+function fixture() {
+  const browsers: Array<{
+    context: EventEmitter;
+    headless: boolean;
+    channel: string;
+    close: ReturnType<typeof vi.fn>;
+  }> = [];
+  const pages: any[] = [];
+  const onClosed = vi.fn();
+  const openContext = vi.fn(async (options: { headless?: boolean }) => {
+    const context = Object.assign(new EventEmitter(), { pages: () => [] });
+    const browser = {
+      context,
+      headless: options.headless ?? false,
+      channel: "Google Chrome",
+      close: vi.fn(async () => {
+        context.emit("close");
+      }),
+    };
+    browsers.push(browser);
+    return browser;
   });
-  return {
-    id: "session-1",
-    profileId: account.profileId,
-    context,
-    page: {
-      isClosed: () => false,
-      bringToFront: vi.fn(async () => undefined),
+  const createPage = vi.fn(
+    async (_browser, options, purpose, publicationId) => {
+      const events = new EventEmitter();
+      let closed = false;
+      const page = {
+        id: `page-${pages.length}`,
+        profileId: options.profileId,
+        purpose,
+        publicationId,
+        owner: "AUTOMATION",
+        page: Object.assign(events, { isClosed: () => closed }),
+        driver: { navigate: vi.fn(async () => undefined) },
+        sessionProbeClient: {},
+        observationSession: {},
+        focus: vi.fn(async () => undefined),
+        handoff: vi.fn(async () => {
+          page.owner = "HUMAN";
+        }),
+        close: vi.fn(async () => {
+          closed = true;
+          events.emit("close");
+        }),
+        dispose: vi.fn(async () => undefined),
+        release: vi.fn(async () => {
+          if (page.owner !== "HUMAN") await page.close();
+        }),
+      };
+      pages.push(page);
+      return page;
     },
-    driver: { navigate: vi.fn(async () => undefined) },
-    focus: vi.fn(async () => undefined),
-    close,
-  };
-}
-
-function dependencies(
-  opened: ReturnType<typeof fakeOpenedSession>,
-  removeProfileDirectory = vi.fn(async () => undefined),
-) {
-  return {
-    openSession: vi.fn(async () => opened) as never,
-    removeProfileDirectory: removeProfileDirectory as never,
+  );
+  const removeProfileDirectory = vi.fn(async () => undefined);
+  const deps = {
+    openContext,
+    createPage,
+    removeProfileDirectory,
+    detectSession: vi.fn(async () => ({
+      status: "authenticated",
+      externalAccountId: account.externalAccountId,
+      identityScheme: account.identityScheme,
+    })),
     profilesRoot: () => "/profiles",
     evidenceRoot: () => "/evidence",
   };
+  const host = new PlaywrightBrowserSessionHost(onClosed, deps as never);
+  return { host, pages, browsers, deps, onClosed };
 }
 
-describe("PlaywrightBrowserSessionHost", () => {
-  it("forgets a closed BrowserContext and reports its account", async () => {
-    const opened = fakeOpenedSession();
-    const onSessionClosed = vi.fn();
-    const host = new PlaywrightBrowserSessionHost(
-      onSessionClosed,
-      dependencies(opened),
-    );
-
-    await host.openForAutomation(account, platform);
-    expect(host.size).toBe(1);
-    opened.context.emit("close");
-
-    expect(onSessionClosed).toHaveBeenCalledWith(account.id);
-    expect(host.size).toBe(0);
-  });
-
-  it("opens login in the account Playwright session", async () => {
-    const opened = fakeOpenedSession();
-    const hostDependencies = dependencies(opened);
-    const host = new PlaywrightBrowserSessionHost(vi.fn(), hostDependencies);
-
-    await host.openForLogin(account, platform, {
-      id: "default",
-      displayName: "登录",
-      url: "https://creator.douyin.com/login",
-    });
-
-    expect(hostDependencies.openSession).toHaveBeenCalledOnce();
-    expect(opened.driver.navigate).toHaveBeenCalledWith(
-      "https://creator.douyin.com/login",
-    );
-    expect(opened.focus).toHaveBeenCalled();
-    expect(host.size).toBe(1);
-  });
-
-  it("reuses the login session for later automation", async () => {
-    const opened = fakeOpenedSession();
-    const hostDependencies = dependencies(opened);
-    const host = new PlaywrightBrowserSessionHost(vi.fn(), hostDependencies);
-
-    await host.openForLogin(account, platform, {
-      id: "default",
-      displayName: "登录",
-      url: "https://creator.douyin.com/login",
-    });
-    const reused = await host.openForAutomation(account, platform);
-
-    expect(reused).toBe(opened);
-    expect(hostDependencies.openSession).toHaveBeenCalledOnce();
-  });
-
-  it("uses a scoped page for account verification and closes it afterwards", async () => {
-    const opened = fakeOpenedSession();
-    const verificationEvents = new EventEmitter();
-    const verificationPage = Object.assign(verificationEvents, {
-      url: () => platform.browser.startUrl,
-      goto: vi.fn(async () => undefined),
-      close: vi.fn(async () => undefined),
-    });
-    Object.assign(opened.context, {
-      newPage: vi.fn(async () => verificationPage),
-    });
-    const host = new PlaywrightBrowserSessionHost(
-      vi.fn(),
-      dependencies(opened),
-    );
-
-    const verification = await host.openForVerification(account, platform);
-    expect(verificationPage.goto).toHaveBeenCalledWith(
-      platform.browser.startUrl,
-      { waitUntil: "domcontentloaded" },
-    );
-
-    await verification.close();
-    expect(verificationPage.close).toHaveBeenCalledOnce();
-    expect(opened.page.bringToFront).toHaveBeenCalled();
-  });
-
-  it("uses the account profile with bundled Playwright Chromium", async () => {
-    const opened = fakeOpenedSession();
-    const hostDependencies = dependencies(opened);
-    const host = new PlaywrightBrowserSessionHost(vi.fn(), hostDependencies);
-
-    await host.openForAutomation(account, platform);
-
-    expect(hostDependencies.openSession).toHaveBeenCalledWith({
-      browser: platform.browser,
-      sessionDetection: platform.accounts.detection,
-      profileId: account.profileId,
-      profileDirectory: `/profiles/${account.profileId}`,
-      evidenceDirectory: `/evidence/${account.id}`,
+describe("isolated account browser sessions", () => {
+  it("shares one cold headless context for concurrent syncs and closes only after both release", async () => {
+    const f = fixture();
+    const [a, b] = await Promise.all([
+      f.host.openForVerification(account, platform),
+      f.host.openForVerification(account, platform),
+    ]);
+    expect(f.deps.openContext).toHaveBeenCalledOnce();
+    expect(f.browsers[0]!.headless).toBe(true);
+    await Promise.all([a.close(), a.close()]);
+    expect(f.browsers[0]!.close).not.toHaveBeenCalled();
+    await b.close();
+    expect(f.browsers[0]!.close).toHaveBeenCalledOnce();
+    expect(f.onClosed).not.toHaveBeenCalled();
+    expect(f.deps.openContext.mock.calls[0]![0]).toMatchObject({
+      profileDirectory: "/profiles/matrix-account-1",
+      headless: true,
     });
   });
-
-  it("closes the account session before deleting its profile", async () => {
-    const opened = fakeOpenedSession();
-    const removeProfileDirectory = vi.fn(async () => undefined);
-    const host = new PlaywrightBrowserSessionHost(
-      vi.fn(),
-      dependencies(opened, removeProfileDirectory),
+  it("waits for headless sync before opening headed with the same profile and channel", async () => {
+    const f = fixture();
+    const sync = await f.host.openForVerification(account, platform);
+    const user = f.host.openUserPage(account, platform);
+    await Promise.resolve();
+    expect(f.deps.openContext).toHaveBeenCalledOnce();
+    await sync.close();
+    await user;
+    expect(f.deps.openContext.mock.calls[1]![0]).toMatchObject({
+      headless: false,
+      profileDirectory: "/profiles/matrix-account-1",
+      preferredChannel: "Google Chrome",
+    });
+    expect(f.browsers[0]!.close).toHaveBeenCalledOnce();
+  });
+  it("keeps headed user and publication pages intact during sync", async () => {
+    const f = fixture();
+    const user = await f.host.openUserPage(account, platform);
+    const publish = await f.host.openForPublication(
+      account,
+      platform,
+      "publication-1",
     );
-
-    await host.openForAutomation(account, platform);
-    await host.remove(account);
-
-    expect(opened.close).toHaveBeenCalledOnce();
-    expect(removeProfileDirectory).toHaveBeenCalledWith(
-      `/profiles/${account.profileId}`,
-      { recursive: true, force: true },
+    const sync = await f.host.openForVerification(account, platform);
+    await sync.close();
+    expect(f.deps.openContext).toHaveBeenCalledOnce();
+    expect(f.pages[0].driver.navigate).toHaveBeenCalledTimes(1);
+    expect(f.pages[0].focus).toHaveBeenCalledTimes(1);
+    expect(user.page.isClosed()).toBe(false);
+    expect(publish.page.isClosed()).toBe(false);
+    expect(f.browsers[0]!.close).not.toHaveBeenCalled();
+  });
+  it("closing the original user page does not restart the context or close publication", async () => {
+    const f = fixture();
+    const user = await f.host.openUserPage(account, platform);
+    const publish = await f.host.openForPublication(
+      account,
+      platform,
+      "publication-1",
     );
-    expect(opened.close.mock.invocationCallOrder[0]).toBeLessThan(
-      removeProfileDirectory.mock.invocationCallOrder[0] ?? 0,
+    await user.close();
+    await f.host.openUserPage(account, platform);
+    expect(f.deps.openContext).toHaveBeenCalledOnce();
+    expect(publish.page.isClosed()).toBe(false);
+  });
+  it("retains human review and finds it by publication id", async () => {
+    const f = fixture();
+    const publish = await f.host.openForPublication(
+      account,
+      platform,
+      "publication-1",
     );
-    expect(host.size).toBe(0);
+    await publish.handoff();
+    await publish.release();
+    expect(publish.page.isClosed()).toBe(false);
+    await f.host.focusPublication("publication-1");
+    expect(f.pages[0].focus).toHaveBeenCalledOnce();
+    await expect(f.host.focusPublication("other")).rejects.toThrow("已关闭");
+  });
+  it("blocks login, removal and another publication while a publication is active", async () => {
+    const f = fixture();
+    await f.host.openForPublication(account, platform, "publication-1");
+    await expect(
+      f.host.openForLogin(account, platform, {
+        id: "login",
+        displayName: "login",
+        url: platform.browser.startUrl,
+      }),
+    ).rejects.toThrow("任务");
+    await expect(f.host.remove(account)).rejects.toThrow("任务");
+    await expect(
+      f.host.openForPublication(account, platform, "publication-2"),
+    ).rejects.toThrow("任务");
+    expect(f.deps.removeProfileDirectory).not.toHaveBeenCalled();
+  });
+  it("retains a live context when closing fails and prevents profile deletion", async () => {
+    const f = fixture();
+    await f.host.openUserPage(account, platform);
+    f.browsers[0]!.close.mockRejectedValueOnce(new Error("close failed"));
+    await expect(f.host.remove(account)).rejects.toThrow("close failed");
+    expect(f.host.size).toBe(1);
+    expect(f.deps.removeProfileDirectory).not.toHaveBeenCalled();
+    await f.host.remove(account);
+    expect(f.deps.removeProfileDirectory).toHaveBeenCalledOnce();
+  });
+  it("does not start a second instance if headless close fails", async () => {
+    const f = fixture();
+    const sync = await f.host.openForVerification(account, platform);
+    f.browsers[0]!.close.mockRejectedValue(new Error("close failed"));
+    await expect(sync.close()).rejects.toThrow("close failed");
+    await expect(f.host.openUserPage(account, platform)).rejects.toThrow(
+      "close failed",
+    );
+    expect(f.deps.openContext).toHaveBeenCalledOnce();
+    expect(f.host.size).toBe(1);
+  });
+  it("ignores late closure of a replaced context", async () => {
+    const f = fixture();
+    const sync = await f.host.openForVerification(account, platform);
+    await sync.close();
+    await f.host.openUserPage(account, platform);
+    f.browsers[0]!.context.emit("close");
+    expect(f.host.size).toBe(1);
+    expect(f.onClosed).not.toHaveBeenCalled();
+  });
+  it("does not silently open a visible browser for an unverified platform", async () => {
+    const f = fixture();
+    const conservative = {
+      ...platform,
+      browser: { ...platform.browser, sessionCapabilities: undefined },
+    } as unknown as PlatformModule;
+    await expect(
+      f.host.openForVerification(account, conservative),
+    ).rejects.toThrow("先打开");
+    expect(f.deps.openContext).not.toHaveBeenCalled();
+  });
+  it("rejects a new publish page with another identity and cleans up", async () => {
+    const f = fixture();
+    f.deps.detectSession.mockResolvedValueOnce({
+      status: "authenticated",
+      externalAccountId: "other",
+      identityScheme: account.identityScheme,
+    });
+    await expect(
+      f.host.openForPublication(account, platform, "publication-1"),
+    ).rejects.toThrow("身份");
+    expect(f.pages[0].close).toHaveBeenCalledOnce();
+    await f.host.openForPublication(account, platform, "publication-2");
+  });
+  it("binds publication browser events and evidence to the task trace", async () => {
+    const f = fixture();
+    const events: string[] = [];
+    const bind = vi.fn();
+    const diagnostics = {
+      traceId: "11111111-1111-4111-8111-111111111111",
+      bind,
+      report: (event: { event: string }) => events.push(event.event),
+      execution: () => ({}),
+      finish: vi.fn(),
+    };
+
+    const publication = await f.host.openForPublication(
+      account,
+      platform,
+      "publication-1",
+      diagnostics as never,
+    );
+    await publication.handoff();
+
+    expect(f.deps.createPage.mock.calls[0]![1]).toMatchObject({
+      evidenceDirectory: "/evidence/11111111-1111-4111-8111-111111111111",
+    });
+    expect(bind).toHaveBeenCalledWith({ pageId: "page-0" });
+    expect(events).toEqual(
+      expect.arrayContaining([
+        "browser.context.opened",
+        "browser.page.opened",
+        "session.detection.started",
+        "session.detection.completed",
+        "browser.page.handed_off",
+      ]),
+    );
+  });
+  it("binds sync browser lifecycle and evidence to its trace", async () => {
+    const f = fixture();
+    const events: string[] = [];
+    const bind = vi.fn();
+    const diagnostics = {
+      traceId: "22222222-2222-4222-8222-222222222222",
+      bind,
+      report: (event: { event: string }) => events.push(event.event),
+    };
+
+    const sync = await f.host.openForVerification(
+      account,
+      platform,
+      diagnostics,
+    );
+    await sync.close();
+
+    expect(f.deps.createPage.mock.calls[0]![1]).toMatchObject({
+      evidenceDirectory: "/evidence/22222222-2222-4222-8222-222222222222",
+    });
+    expect(bind).toHaveBeenCalledWith({ pageId: "page-0" });
+    expect(events).toEqual([
+      "browser.context.opened",
+      "browser.page.opened",
+      "browser.page.closed",
+    ]);
+  });
+  it("prevents any new browser after shutdown", async () => {
+    const f = fixture();
+    await f.host.closeAll();
+    await expect(f.host.openUserPage(account, platform)).rejects.toThrow(
+      "shutting down",
+    );
+    expect(f.deps.openContext).not.toHaveBeenCalled();
   });
 });

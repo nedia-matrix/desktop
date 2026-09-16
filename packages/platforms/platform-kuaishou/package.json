@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@nedia-matrix/automation-engine": "workspace:*",
-    "@nedia-matrix/platform-core": "workspace:*"
+    "@nedia-matrix/platform-sdk": "workspace:*"
   },
   "devDependencies": {
     "@nedia-matrix/tsconfig": "workspace:*",

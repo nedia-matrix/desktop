@@ -4,33 +4,13 @@ import { isIP } from "node:net";
 import { basename, join } from "node:path";
 import { lookup } from "node:dns/promises";
 
+import type {
+  DownloadedPublicationAsset,
+  PublicationAssetRole,
+  RemotePublicationAsset,
+} from "@nedia-matrix/publishing";
+
 import type { ContentAddressedPublicationAssetStore } from "./content-addressed-asset-store.js";
-
-export type PublicationAssetRole = "image" | "video" | "cover" | "inline_image";
-
-export interface RemotePublicationAsset {
-  url: string;
-  name: string;
-  mediaType: "image/jpeg" | "image/png" | "image/webp" | "video/mp4";
-  role: PublicationAssetRole;
-  order: number;
-  sourceAssetId?: string;
-}
-
-export interface DownloadedPublicationAsset {
-  created: boolean;
-  filePath: string;
-  hash: string;
-  localRelativePath: string;
-  mediaType: RemotePublicationAsset["mediaType"];
-  name: string;
-  order: number;
-  role: PublicationAssetRole;
-  size: number;
-  sourceAssetId: string | null;
-  sourceOrigin: string;
-  downloadedAt: string;
-}
 
 interface RemoteAssetDownloaderOptions {
   assetStore: ContentAddressedPublicationAssetStore;
@@ -96,7 +76,7 @@ export class RemoteAssetDownloader {
         downloaded.push({
           ...staged,
           created: committed.created,
-          filePath: committed.absolutePath,
+          resourceReference: committed.absolutePath,
           localRelativePath: committed.relativePath,
           name: asset.name,
           role: asset.role,

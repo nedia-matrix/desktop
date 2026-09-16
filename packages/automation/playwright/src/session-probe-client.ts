@@ -2,8 +2,8 @@ import type {
   SessionDetectionPlan,
   SessionProbeClient,
   SessionProbeResponse,
-} from "@nedia-matrix/automation-contracts";
-import type { PlatformBrowserPolicy } from "@nedia-matrix/platform-core";
+} from "@nedia-matrix/automation-engine";
+import type { PlatformBrowserPolicy } from "@nedia-matrix/platform-sdk";
 import type { BrowserContext, Page, Response } from "playwright";
 
 import { isAllowedPlatformNavigation } from "./navigation-policy.js";

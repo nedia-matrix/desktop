@@ -1,8 +1,6 @@
-import type {
-  PlatformAccountSummary,
-  PlatformSummary,
-  PublicationStatus,
-} from "@nedia-matrix/ipc-contracts";
+import type { PlatformAccountView } from "@nedia-matrix/account-management";
+import type { PublicationStatus } from "@nedia-matrix/publishing";
+import type { PlatformSummary } from "../../bridge/contracts.js";
 
 export const publicationStateLabels: Readonly<
   Record<PublicationStatus, string>
@@ -48,17 +46,17 @@ export function platformFor(
 }
 
 export function accountLabel(
-  account: PlatformAccountSummary,
+  account: PlatformAccountView,
   platforms: readonly PlatformSummary[],
 ): string {
   const platform = platformFor(platforms, account.platformId);
   return `${account.nickname ?? account.displayName} · ${platform?.displayName ?? account.platformId}`;
 }
 
-export function accountStatus(account: PlatformAccountSummary): string {
+export function accountStatus(account: PlatformAccountView): string {
   switch (account.status) {
     case "authenticated":
-      return "已连接";
+      return "已登录";
     case "login_required":
       return "需要登录";
     case "unknown":

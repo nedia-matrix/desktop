@@ -1,10 +1,7 @@
-import type { PlatformAccountSummary } from "@nedia-matrix/ipc-contracts";
+import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  cleanupClosedBrowserSession,
-  removeAccountAndResources,
-} from "../src/main/accounts/application/account-resource-cleanup.js";
+import { cleanupClosedBrowserSession } from "../src/main/accounts/application/account-resource-cleanup.js";
 import {
   shutdownDesktopRuntime,
   waitForShutdown,
@@ -14,7 +11,7 @@ const account = {
   id: "account-1",
   platformId: "douyin",
   profileId: "matrix-douyin-account-1",
-} as PlatformAccountSummary;
+} as PlatformAccountSnapshot;
 
 describe("desktop runtime cleanup", () => {
   it("stops observations and releases media when a BrowserContext closes", () => {
@@ -30,35 +27,15 @@ describe("desktop runtime cleanup", () => {
     expect(mediaSelections.removeForAccount).toHaveBeenCalledWith(account.id);
   });
 
-  it("closes the session, deletes its profile, and removes local account resources", async () => {
-    const publishObservations = { stop: vi.fn() };
-    const mediaSelections = { removeForAccount: vi.fn() };
-    const browserSessions = { remove: vi.fn(async () => undefined) };
-    const accountStore = { remove: vi.fn() };
-
-    await removeAccountAndResources(account, {
-      accountStore,
-      browserSessions,
-      mediaSelections,
-      publishObservations,
-    });
-
-    expect(publishObservations.stop).toHaveBeenCalledWith(account.id);
-    expect(mediaSelections.removeForAccount).toHaveBeenCalledWith(account.id);
-    expect(browserSessions.remove).toHaveBeenCalledWith(account);
-    expect(accountStore.remove).toHaveBeenCalledWith(account.id);
-    expect(browserSessions.remove.mock.invocationCallOrder[0]).toBeLessThan(
-      accountStore.remove.mock.invocationCallOrder[0] ?? 0,
-    );
-  });
-
-  it("stops all observations, clears media tokens, and closes every session on exit", async () => {
+  it("stops observations, closes sessions, and flushes diagnostics on exit", async () => {
     const publishObservations = { stopAll: vi.fn() };
     const mediaSelections = { clear: vi.fn() };
     const browserSessions = { closeAll: vi.fn(async () => undefined) };
+    const diagnostics = { close: vi.fn(async () => undefined) };
 
     await shutdownDesktopRuntime({
       browserSessions,
+      diagnostics,
       mediaSelections,
       publishObservations,
     });
@@ -66,6 +43,7 @@ describe("desktop runtime cleanup", () => {
     expect(publishObservations.stopAll).toHaveBeenCalledOnce();
     expect(mediaSelections.clear).toHaveBeenCalledOnce();
     expect(browserSessions.closeAll).toHaveBeenCalledOnce();
+    expect(diagnostics.close).toHaveBeenCalledOnce();
   });
 
   it("reports a completed shutdown without leaving a timeout behind", async () => {

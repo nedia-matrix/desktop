@@ -15,7 +15,7 @@ describe("Kuaishou platform module", () => {
             kind: "observed-response",
             method: "POST",
             url: "https://cp.kuaishou.com/rest/cp/creator/pc/home/userInfo",
-            timeoutMs: 1_500,
+            timeoutMs: 10_000,
           },
           fields: expect.objectContaining({
             externalAccountId: ["data", "coreUserInfo", "userId"],
@@ -23,6 +23,7 @@ describe("Kuaishou platform module", () => {
         }),
       ]),
     );
+    expect(kuaishouPlatformModule.accounts.detection.probes).toHaveLength(1);
     expect(kuaishouPlatformModule.publishing?.forms.video).toMatchObject({
       submissionModes: ["automatic", "manual_confirmation"],
       descriptionComposition: {

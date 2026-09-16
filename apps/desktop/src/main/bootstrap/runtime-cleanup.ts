@@ -8,6 +8,9 @@ interface RuntimeShutdownDependencies {
   browserSessions: {
     closeAll(): Promise<void>;
   };
+  diagnostics?: {
+    close(): Promise<void>;
+  };
 }
 
 export type ShutdownWaitResult = "completed" | "timed-out";
@@ -18,6 +21,7 @@ export async function shutdownDesktopRuntime(
   await dependencies.publishObservations.stopAll();
   dependencies.mediaSelections.clear();
   await dependencies.browserSessions.closeAll();
+  await dependencies.diagnostics?.close();
 }
 
 export async function waitForShutdown(

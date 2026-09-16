@@ -1,4 +1,7 @@
-import type { PublicationRecord } from "@nedia-matrix/application-publishing";
+import {
+  toPublicationSummary,
+  type PublicationSnapshot,
+} from "@nedia-matrix/publishing";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -6,10 +9,9 @@ import {
   mergeStoredPublication,
   parseStoredPublications,
   removeStoredPublication,
-  toPublicationSummary,
-} from "../src/main/publishing/infrastructure/electron-publication-repository.js";
+} from "../src/main/publishing/infrastructure/publication-state-codec.js";
 
-const record: PublicationRecord = {
+const record: PublicationSnapshot = {
   requestId: "request-1",
   publication: {
     id: "publication-1",
@@ -138,5 +140,15 @@ describe("publication store mapping", () => {
     });
     expect(() => assertSupportedPublicationStoreVersion(2)).not.toThrow();
     expect(() => assertSupportedPublicationStoreVersion(3)).not.toThrow();
+  });
+
+  it.each([
+    { lastObservationSequence: -1 },
+    { submissionEvidence: "invented" },
+    { submissionMode: "invented" },
+    { retained: "yes" },
+    { tags: ["valid", 1] },
+  ])("does not normalize explicitly invalid legacy values: %o", (change) => {
+    expect(parseStoredPublications([{ ...record, ...change }])).toEqual([]);
   });
 });

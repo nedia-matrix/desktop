@@ -4,7 +4,7 @@ import {
   type PublishMonitorContext,
   type PublishResultEvent,
   type PublishResultMonitor,
-} from "@nedia-matrix/platform-core";
+} from "@nedia-matrix/platform-sdk";
 
 const publishRefreshPath = "/rest/cp/works/v2/video/pc/publish/refresh";
 const maxResponseBytes = 2_000_000;
