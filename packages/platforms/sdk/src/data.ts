@@ -62,6 +62,7 @@ export interface PlatformContentMetricsData {
 
 export interface PlatformContentData {
   readonly externalContentId: string;
+  readonly contentUrl?: string;
   readonly contentType: "video" | "image_text" | "unknown";
   readonly title?: string;
   readonly description?: string;

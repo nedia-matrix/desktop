@@ -6,6 +6,8 @@ import type {
   PlatformContentReadResult,
 } from "@nedia-matrix/platform-sdk";
 
+import { buildDouyinContentUrl } from "./content-url.js";
+
 const PROFILE_URL = "https://creator.douyin.com/web/api/media/user/info/";
 const CONTENT_PAGE_URL =
   "https://creator.douyin.com/creator-micro/content/manage";
@@ -77,9 +79,12 @@ function parseContent(
   const description = text(item.desc);
   const title = text(record(item.next_info)?.item_title);
   const status = record(item.status);
+  const contentType = images.length > 0 ? "image_text" : "video";
+  const contentUrl = buildDouyinContentUrl(externalContentId, contentType);
   return {
     externalContentId,
-    contentType: images.length > 0 ? "image_text" : "video",
+    ...(contentUrl ? { contentUrl } : {}),
+    contentType,
     ...(title ? { title } : {}),
     ...(description ? { description } : {}),
     ...(cover ? { coverUrl: cover } : {}),

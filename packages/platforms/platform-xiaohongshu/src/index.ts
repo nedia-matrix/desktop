@@ -1,4 +1,5 @@
 export { xiaohongshuPlatformModule } from "./platform.js";
+export { buildXiaohongshuContentUrl } from "./content-url.js";
 export {
   parseXiaohongshuAccountProfile,
   parseXiaohongshuContentPage,

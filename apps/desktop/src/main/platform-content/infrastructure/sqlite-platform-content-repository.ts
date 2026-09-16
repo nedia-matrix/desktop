@@ -7,7 +7,16 @@ import {
 import type { DesktopMetadataDatabase } from "../../persistence/desktop-metadata-database.js";
 
 function parseContent(value: unknown): PlatformContentSnapshot {
-  return assertPlatformContentSnapshot(value as PlatformContentSnapshot);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("Invalid platform content snapshot");
+  }
+  return assertPlatformContentSnapshot({
+    ...value,
+    contentUrl:
+      "contentUrl" in value && value.contentUrl !== undefined
+        ? value.contentUrl
+        : null,
+  } as PlatformContentSnapshot);
 }
 
 function parseRun(value: unknown): PlatformContentSyncRun {

@@ -49,6 +49,8 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.listPlatformContents, request),
   refreshPlatformContents: (request: PlatformAccountRequest) =>
     ipcRenderer.invoke(ipcChannels.refreshPlatformContents, request),
+  openPlatformContent: (request) =>
+    ipcRenderer.invoke(ipcChannels.openPlatformContent, request),
   selectPublishMedia: (request: SelectPublishMediaRequest) =>
     ipcRenderer.invoke(ipcChannels.selectPublishMedia, request),
   preparePublishDraft: (request: PreparePublishDraftRequest) =>

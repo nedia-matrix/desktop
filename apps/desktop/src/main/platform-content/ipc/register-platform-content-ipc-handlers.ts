@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { ipcMain, shell } from "electron";
 
 import { ipcChannels } from "../../../bridge/channels.js";
 import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
@@ -18,5 +18,13 @@ export function registerPlatformContentIpcHandlers(
   }));
   ipcMain.handle(ipcChannels.refreshPlatformContents, (_event, request) =>
     application.platformContents.refresh(request.accountId),
+  );
+  ipcMain.handle(ipcChannels.openPlatformContent, async (_event, request) =>
+    shell.openExternal(
+      application.platformContents.contentUrl(
+        request.accountId,
+        request.externalContentId,
+      ),
+    ),
   );
 }

@@ -21,6 +21,7 @@ describe("PlatformContent", () => {
       observedAt: firstObservedAt,
       data: {
         externalContentId: "remote-1",
+        contentUrl: "https://www.douyin.com/video/remote-1",
         contentType: "video",
         title: "标题",
         metrics: { viewCount: 10 },
@@ -38,6 +39,7 @@ describe("PlatformContent", () => {
 
     expect(content.toSnapshot()).toMatchObject({
       title: "标题",
+      contentUrl: "https://www.douyin.com/video/remote-1",
       metrics: { viewCount: 10, likeCount: 2 },
       metricsObservedAt: secondObservedAt,
     });
@@ -65,12 +67,14 @@ describe("PlatformContentService", () => {
       platforms: {
         require: () =>
           ({
+            browser: { allowedHostSuffixes: ["douyin.com"] },
             content: {
               implementationStatus: "reference-derived",
               read: async () => ({
                 items: [
                   {
                     externalContentId: "content-remote-1",
+                    contentUrl: "https://www.douyin.com/video/content-remote-1",
                     contentType: "video",
                     metrics: { viewCount: 12 },
                   },
@@ -131,6 +135,9 @@ describe("PlatformContentService", () => {
         metrics: { viewCount: 12 },
       },
     ]);
+    expect(service.contentUrl(account.id, "content-remote-1")).toBe(
+      "https://www.douyin.com/video/content-remote-1",
+    );
   });
 
   it("records a failed run and closes the sync page when identity changed", async () => {

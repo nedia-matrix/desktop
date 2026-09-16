@@ -22,6 +22,7 @@ export const douyinPlatformModule = {
 };
 
 export { douyinRequestedContentCapability } from "./requested-content-reader.js";
+export { buildDouyinContentUrl } from "./content-url.js";
 export {
   parseDouyinAccountProfile,
   parseDouyinContentPage,

@@ -715,6 +715,7 @@ describe("SQLite desktop metadata", () => {
       accountId: account.id,
       platformId: account.platformId,
       externalContentId: "content-remote-1",
+      contentUrl: "https://www.douyin.com/video/content-remote-1",
       contentType: "video" as const,
       title: "作品",
       description: null,
@@ -744,6 +745,13 @@ describe("SQLite desktop metadata", () => {
       content,
     ]);
     expect(metadata.platformContents.latestRun(account.id)).toEqual(run);
+    const { contentUrl: _contentUrl, ...legacyContent } = content;
+    metadata.database.connection
+      .prepare("UPDATE platform_contents SET record=? WHERE id=?")
+      .run(JSON.stringify(legacyContent), content.id);
+    expect(metadata.platformContents.listByAccount(account.id)).toEqual([
+      { ...content, contentUrl: null },
+    ]);
     expect(
       metadata.database.connection.prepare("PRAGMA user_version").get()
         ?.user_version,

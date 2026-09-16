@@ -63,7 +63,10 @@ const account: PlatformAccountSnapshot = {
   externalAccountId: "external-1",
   nickname: "测试账号",
   avatarUrl: "https://example.com/avatar.png",
-  accountInfo: [{ key: "follower_count", value: 12800 }],
+  accountInfo: [
+    { key: "follower_count", value: 12800 },
+    { key: "following_count", value: 128 },
+  ],
   profileSyncedAt: null,
   status: "authenticated",
   lastVerifiedAt: "2026-08-10T00:00:00.000Z",

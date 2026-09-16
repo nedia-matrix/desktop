@@ -3,6 +3,7 @@ import type {
   PlatformDataClient,
   PlatformModule,
 } from "@nedia-matrix/platform-sdk";
+import { isAllowedPlatformUrl } from "@nedia-matrix/platform-sdk";
 import {
   PlatformContent,
   type PlatformContentSnapshot,
@@ -118,6 +119,27 @@ export class PlatformContentService {
   latestRun(accountId: string): PlatformContentSyncRun | undefined {
     assertAccountId(accountId);
     return this.dependencies.repository.latestRun(accountId);
+  }
+
+  contentUrl(accountId: string, externalContentId: string): string {
+    assertAccountId(accountId);
+    if (typeof externalContentId !== "string" || !externalContentId.trim()) {
+      throw new TypeError("Invalid external content ID");
+    }
+    const content = this.dependencies.repository.find(
+      accountId,
+      externalContentId,
+    );
+    if (!content?.contentUrl) {
+      throw new TypeError("Platform content does not have a URL");
+    }
+    const platform = this.dependencies.platforms.require(content.platformId);
+    if (!isAllowedPlatformUrl(platform.browser, content.contentUrl)) {
+      throw new TypeError(
+        "Platform content URL is outside the platform boundary",
+      );
+    }
+    return content.contentUrl;
   }
 
   refresh(accountId: string): Promise<PlatformContentSyncRun> {

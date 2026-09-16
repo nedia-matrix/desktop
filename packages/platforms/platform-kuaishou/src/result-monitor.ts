@@ -6,6 +6,8 @@ import {
   type PublishResultMonitor,
 } from "@nedia-matrix/platform-sdk";
 
+import { buildKuaishouContentUrl } from "./content-url.js";
+
 const publishRefreshPath = "/rest/cp/works/v2/video/pc/publish/refresh";
 const maxResponseBytes = 2_000_000;
 const verificationTimeoutMs = 120_000;
@@ -164,7 +166,7 @@ export function createKuaishouPublishResultMonitor(
       finish({ kind: "uncertain", message: result.message });
       return;
     }
-    const contentUrl = `https://www.kuaishou.com/short-video/${result.workId}`;
+    const contentUrl = buildKuaishouContentUrl(result.workId);
     finish({ kind: "published", contentId: result.workId, contentUrl });
   }
 

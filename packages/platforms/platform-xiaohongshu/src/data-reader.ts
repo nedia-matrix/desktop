@@ -6,6 +6,8 @@ import type {
   PlatformContentReadResult,
 } from "@nedia-matrix/platform-sdk";
 
+import { buildXiaohongshuContentUrl } from "./content-url.js";
+
 const PROFILE_PAGE_URL = "https://creator.xiaohongshu.com/new/home";
 const PROFILE_API_URL =
   "https://creator.xiaohongshu.com/api/galaxy/creator/home/personal_info";
@@ -74,8 +76,10 @@ function parseContent(value: unknown): PlatformContentData | null {
   const images = Array.isArray(item.images_list) ? item.images_list : [];
   const coverUrl = secureUrl(record(images[0])?.url);
   const type = text(item.type);
+  const contentUrl = buildXiaohongshuContentUrl(externalContentId);
   return {
     externalContentId,
+    ...(contentUrl ? { contentUrl } : {}),
     contentType:
       type === "video" ? "video" : type === "normal" ? "image_text" : "unknown",
     ...(text(item.display_title) ? { title: text(item.display_title) } : {}),

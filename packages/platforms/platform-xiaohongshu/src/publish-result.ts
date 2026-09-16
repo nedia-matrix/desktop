@@ -1,3 +1,5 @@
+import { buildXiaohongshuContentUrl } from "./content-url.js";
+
 export type XiaohongshuPublishContentForm = "video" | "imageText";
 
 export interface XiaohongshuPublishResponse {
@@ -142,7 +144,7 @@ export function classifyXiaohongshuPublishResponse(
 
   if (postId || postUrl) {
     if (postId && !postUrl) {
-      postUrl = `https://www.xiaohongshu.com/explore/${postId}`;
+      postUrl = buildXiaohongshuContentUrl(postId);
     }
     return { kind: "published", postId, postUrl };
   }

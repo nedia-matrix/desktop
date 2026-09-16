@@ -59,6 +59,7 @@ describe("Douyin data reader", () => {
       items: [
         {
           externalContentId: "7683054343616040198",
+          contentUrl: "https://www.douyin.com/note/7683054343616040198",
           contentType: "image_text",
           metrics: {
             viewCount: 20,

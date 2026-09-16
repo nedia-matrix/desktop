@@ -12,9 +12,19 @@ export class RuntimeAccountRoutes {
     writeJson(
       response,
       200,
-      this.application.accounts
-        .list()
-        .map((account) => toRuntimeAccountSession(account)),
+      // this.application.accounts
+      //   .list()
+      //   .map((account) => toRuntimeAccountSession(account)),
+      // TODO 短期兼容代码，v0.3.2之后就可以移除了，同时放开上面注释的代码
+      this.application.accounts.list().map((account) => {
+        const session = toRuntimeAccountSession(account);
+        return {
+          ...session,
+          accountInfo: session.accountInfo.filter(
+            (item) => item.key !== "following_count",
+          ),
+        };
+      }),
     );
   }
 

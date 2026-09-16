@@ -122,6 +122,18 @@ export function PlatformContentsPage({
     }
   };
 
+  const openContent = async (content: PlatformContentSnapshot) => {
+    if (!content.contentUrl) return;
+    try {
+      await window.matrix.openPlatformContent({
+        accountId: content.accountId,
+        externalContentId: content.externalContentId,
+      });
+    } catch (error) {
+      context.setStatus(errorMessage(error, "打开平台内容失败"), "error");
+    }
+  };
+
   return (
     <div class="page-stack">
       {!fixedAccountId && (
@@ -154,8 +166,6 @@ export function PlatformContentsPage({
         </section>
       )}
 
-      {data.latestRun && <SyncRunSummary run={data.latestRun} />}
-
       <section class="data-surface" aria-labelledby="platform-content-title">
         <header class="surface-header">
           <div>
@@ -164,9 +174,11 @@ export function PlatformContentsPage({
               显示最近一次手动同步保存的作品和指标，共 {data.items.length} 条。
             </p>
           </div>
+          {data.latestRun && <SyncRunStatus run={data.latestRun} />}
         </header>
         <div class="platform-content-heading" aria-hidden="true">
           <span>作品</span>
+          <span>内容类型</span>
           <span>指标</span>
           <span>平台状态</span>
           <span>数据时间</span>
@@ -181,7 +193,11 @@ export function PlatformContentsPage({
             />
           ) : (
             data.items.map((content) => (
-              <PlatformContentRow content={content} key={content.id} />
+              <PlatformContentRow
+                content={content}
+                key={content.id}
+                onOpen={() => void openContent(content)}
+              />
             ))
           )}
         </div>
@@ -190,7 +206,7 @@ export function PlatformContentsPage({
   );
 }
 
-function SyncRunSummary({ run }: { run: PlatformContentSyncRun }) {
+function SyncRunStatus({ run }: { run: PlatformContentSyncRun }) {
   const label =
     run.status === "completed"
       ? "同步完成"
@@ -198,22 +214,34 @@ function SyncRunSummary({ run }: { run: PlatformContentSyncRun }) {
         ? "同步结果不完整"
         : "同步失败";
   return (
-    <section class={`sync-run-summary sync-${run.status}`}>
+    <div
+      class={`sync-run-status sync-${run.status}`}
+      title={run.diagnostics.join("；") || undefined}
+    >
       <strong>{label}</strong>
-      <span>
-        {formatTime(run.completedAt)} · {run.pagesRead} 页 · {run.itemsRead} 条
-        {run.remoteTotal === null ? "" : ` / 平台共 ${run.remoteTotal} 条`}
-      </span>
-      {run.diagnostics.length > 0 && (
-        <small>{run.diagnostics.join("；")}</small>
-      )}
-    </section>
+      <time>{formatTime(run.completedAt)}</time>
+    </div>
   );
 }
 
-function PlatformContentRow({ content }: { content: PlatformContentSnapshot }) {
+function PlatformContentRow({
+  content,
+  onOpen,
+}: {
+  content: PlatformContentSnapshot;
+  onOpen(): void;
+}) {
   return (
-    <article class="platform-content-row">
+    <button
+      class="platform-content-row"
+      type="button"
+      aria-disabled={!content.contentUrl}
+      tabIndex={content.contentUrl ? 0 : -1}
+      title={
+        content.contentUrl ? "在浏览器中打开平台内容" : "该内容没有可用链接"
+      }
+      onClick={onOpen}
+    >
       <div class="content-summary-cell">
         <PlatformContentCover content={content} />
         <span>
@@ -225,6 +253,9 @@ function PlatformContentRow({ content }: { content: PlatformContentSnapshot }) {
           </small>
         </span>
       </div>
+      <span class="platform-content-type">
+        {contentTypeLabel(content.contentType)}
+      </span>
       <div class="platform-content-metrics">
         <Metric label="播放" value={content.metrics.viewCount} />
         <Metric label="点赞" value={content.metrics.likeCount} />
@@ -240,8 +271,14 @@ function PlatformContentRow({ content }: { content: PlatformContentSnapshot }) {
         </strong>
         <small>采集 {formatTime(content.contentObservedAt)}</small>
       </div>
-    </article>
+    </button>
   );
+}
+
+function contentTypeLabel(
+  type: PlatformContentSnapshot["contentType"],
+): string {
+  return type === "video" ? "视频" : type === "image_text" ? "图文" : "未知";
 }
 
 function PlatformContentCover({

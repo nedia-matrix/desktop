@@ -10,6 +10,7 @@ export const ipcChannels = {
   platformAccountsChanged: "matrix:accounts:changed",
   listPlatformContents: "matrix:platform-contents:list",
   refreshPlatformContents: "matrix:platform-contents:refresh",
+  openPlatformContent: "matrix:platform-contents:open",
   selectPublishMedia: "matrix:publish:select-media",
   preparePublishDraft: "matrix:publish:prepare-draft",
   listPublications: "matrix:publications:list",

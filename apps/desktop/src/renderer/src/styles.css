@@ -391,14 +391,17 @@ p {
   align-items: center;
   gap: 14px;
 }
-.account-avatar-large {
+.account-avatar.account-avatar-large {
   width: 52px;
   height: 52px;
   border-radius: 13px;
   font-size: 1rem;
 }
 .account-profile-copy {
+  display: grid;
   min-width: 0;
+  max-width: min(460px, 42vw);
+  gap: 2px;
 }
 .account-profile-name {
   display: flex;
@@ -415,9 +418,17 @@ p {
   white-space: nowrap;
 }
 .account-profile-copy p {
-  margin: 5px 0 0;
+  margin: 0;
   color: var(--text-secondary);
   font-size: 0.69rem;
+}
+.account-profile-copy .account-profile-description {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .account-profile-actions {
   display: flex;
@@ -482,39 +493,87 @@ p {
   font-size: 1.15rem;
   font-weight: 690;
 }
-.account-recent-row {
+.account-recent-grid {
   display: grid;
-  min-height: 62px;
-  grid-template-columns: auto minmax(180px, 1fr) auto minmax(120px, auto);
-  align-items: center;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
-  padding: 9px 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 14px;
 }
-.account-recent-row:last-child {
-  border-bottom: 0;
-}
-.account-recent-row:hover {
-  background: var(--surface-muted);
-}
-.account-recent-copy {
+button.account-recent-card {
   display: grid;
   min-width: 0;
-  gap: 3px;
-}
-.account-recent-copy strong,
-.account-recent-copy small {
+  min-height: 0;
+  justify-content: stretch;
+  gap: 0;
   overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  line-height: normal;
+  text-align: left;
+}
+button.account-recent-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+button.account-recent-card[aria-disabled="true"] {
+  cursor: default;
+}
+.account-recent-cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--surface-muted);
+  object-fit: cover;
+}
+.account-recent-cover-fallback {
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+}
+.account-recent-card-body {
+  display: grid;
+  gap: 12px;
+  padding: 11px 12px 12px;
+}
+.account-recent-card-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.account-recent-card-heading strong {
+  overflow: hidden;
+  flex: 1;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.account-recent-copy strong {
-  font-size: 0.75rem;
+.account-recent-card-heading small {
+  flex: none;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--surface-active);
+  color: var(--text-secondary);
+  font-size: 0.59rem;
 }
-.account-recent-copy small,
-.account-recent-metrics,
-.account-recent-row time {
+.account-recent-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.account-recent-metrics > span {
+  display: grid;
+  gap: 3px;
+}
+.account-recent-metrics small {
   color: var(--text-tertiary);
+  font-size: 0.59rem;
+}
+.account-recent-metrics strong {
+  color: var(--text-secondary);
   font-size: 0.63rem;
 }
 .account-empty-workspace {
@@ -1207,8 +1266,8 @@ label {
 .platform-content-row {
   display: grid;
   grid-template-columns:
-    minmax(230px, 1.4fr) minmax(210px, 1fr) minmax(90px, 0.5fr)
-    minmax(155px, 0.8fr);
+    minmax(220px, 1.35fr) minmax(72px, 0.38fr) minmax(200px, 1fr)
+    minmax(88px, 0.48fr) minmax(150px, 0.75fr);
   align-items: center;
   column-gap: 16px;
 }
@@ -1222,15 +1281,27 @@ label {
   font-weight: 650;
 }
 .platform-content-row {
+  width: 100%;
   min-height: 70px;
+  justify-content: stretch;
   padding: 10px 16px;
+  border: 0;
   border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  line-height: normal;
+  text-align: left;
 }
 .platform-content-row:last-child {
   border-bottom: 0;
 }
-.platform-content-row:hover {
+button.platform-content-row:hover:not(:disabled) {
+  border-color: var(--border);
   background: var(--surface-muted);
+}
+.platform-content-row[aria-disabled="true"] {
+  cursor: default;
 }
 .platform-content-cover {
   width: 42px;
@@ -1252,31 +1323,28 @@ label {
   font-size: 0.7rem;
 }
 .platform-content-metrics small,
-.platform-content-status {
+.platform-content-status,
+.platform-content-type {
   color: var(--text-tertiary);
   font-size: 0.61rem;
 }
-.sync-run-summary {
+.sync-run-status {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 3px 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  font-size: 0.69rem;
+  flex: none;
+  justify-items: end;
+  gap: 4px;
 }
-.sync-run-summary span,
-.sync-run-summary small {
+.sync-run-status strong {
+  color: var(--success);
+  font-size: 0.67rem;
+}
+.sync-run-status time {
   color: var(--text-secondary);
+  font-size: 0.63rem;
 }
-.sync-run-summary small {
-  grid-column: 1 / -1;
-}
-.sync-run-summary.sync-partial,
-.sync-run-summary.sync-failed {
-  border-color: var(--warning);
-  background: var(--warning-soft);
+.sync-run-status.sync-partial strong,
+.sync-run-status.sync-failed strong {
+  color: var(--warning);
 }
 .content-record {
   min-height: 70px;
@@ -1650,13 +1718,12 @@ label {
   }
   .platform-content-heading,
   .platform-content-row {
-    grid-template-columns: minmax(210px, 1.4fr) minmax(190px, 1fr) minmax(
-        90px,
-        0.5fr
-      );
+    grid-template-columns:
+      minmax(200px, 1.35fr) minmax(68px, 0.4fr) minmax(180px, 1fr)
+      minmax(86px, 0.5fr);
   }
-  .platform-content-heading > :nth-child(4),
-  .platform-content-row > :nth-child(4) {
+  .platform-content-heading > :nth-child(5),
+  .platform-content-row > :nth-child(5) {
     display: none;
   }
   .content-list-heading > :nth-child(4),
@@ -1682,11 +1749,8 @@ label {
   .platform-grid {
     grid-template-columns: 1fr;
   }
-  .account-recent-row {
-    grid-template-columns: auto minmax(160px, 1fr) auto;
-  }
-  .account-recent-metrics {
-    display: none;
+  .account-profile-copy {
+    max-width: 36vw;
   }
 }
 

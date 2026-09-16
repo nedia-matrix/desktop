@@ -57,6 +57,8 @@ describe("Xiaohongshu data reader", () => {
       items: [
         {
           externalContentId: "6a9f878e000000001203f51b",
+          contentUrl:
+            "https://www.xiaohongshu.com/explore/6a9f878e000000001203f51b",
           contentType: "image_text",
           coverUrl: "https://sns.example/cover.jpg",
           platformStatus: "1",

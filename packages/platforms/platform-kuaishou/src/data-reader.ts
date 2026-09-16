@@ -6,6 +6,8 @@ import type {
   PlatformContentReadResult,
 } from "@nedia-matrix/platform-sdk";
 
+import { buildKuaishouContentUrl } from "./content-url.js";
+
 const PROFILE_PAGE_URL = "https://cp.kuaishou.com/profile";
 const PROFILE_API_URL =
   "https://cp.kuaishou.com/rest/cp/creator/pc/home/userInfo";
@@ -106,8 +108,10 @@ function parseContent(
     throw new Error("快手作品列表账号与当前登录账号不一致");
   }
   const duration = count(item.durationSecond);
+  const contentUrl = buildKuaishouContentUrl(externalContentId);
   return {
     externalContentId,
+    ...(contentUrl ? { contentUrl } : {}),
     contentType: duration === 0 ? "image_text" : "video",
     ...(text(item.title) ? { title: text(item.title) } : {}),
     ...(text(item.publishCoverUrl)

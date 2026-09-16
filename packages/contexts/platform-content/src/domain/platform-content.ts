@@ -13,6 +13,7 @@ export interface PlatformContentSnapshot {
   readonly accountId: string;
   readonly platformId: string;
   readonly externalContentId: string;
+  readonly contentUrl: string | null;
   readonly contentType: "video" | "image_text" | "unknown";
   readonly title: string | null;
   readonly description: string | null;
@@ -47,6 +48,7 @@ export class PlatformContent {
       accountId: input.accountId,
       platformId: input.platformId,
       externalContentId: input.data.externalContentId,
+      contentUrl: input.data.contentUrl ?? null,
       contentType: input.data.contentType,
       title: input.data.title ?? null,
       description: input.data.description ?? null,
@@ -72,6 +74,7 @@ export class PlatformContent {
     const hasMetrics = Object.keys(data.metrics).length > 0;
     const candidate: PlatformContentSnapshot = {
       ...this.snapshot,
+      contentUrl: data.contentUrl ?? this.snapshot.contentUrl,
       contentType: data.contentType,
       title: data.title ?? this.snapshot.title,
       description: data.description ?? this.snapshot.description,
@@ -118,6 +121,7 @@ export function assertPlatformContentSnapshot(
     snapshot.title,
     snapshot.description,
     snapshot.coverUrl,
+    snapshot.contentUrl,
     snapshot.platformStatus,
   ]) {
     if (value !== null && typeof value !== "string") {

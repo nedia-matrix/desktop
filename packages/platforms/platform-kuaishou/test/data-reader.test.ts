@@ -169,6 +169,7 @@ describe("Kuaishou data reader", () => {
       items: [
         {
           externalContentId: "3xjhawhjq26avd9",
+          contentUrl: "https://www.kuaishou.com/short-video/3xjhawhjq26avd9",
           contentType: "video",
           platformStatus: "4",
           metrics: { viewCount: 1, likeCount: 0, commentCount: 0 },

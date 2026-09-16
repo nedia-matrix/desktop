@@ -62,6 +62,10 @@ export interface MatrixDesktopApi {
   refreshPlatformContents(
     request: PlatformAccountRequest,
   ): Promise<PlatformContentSyncRun>;
+  openPlatformContent(request: {
+    accountId: string;
+    externalContentId: string;
+  }): Promise<void>;
   selectPublishMedia(
     request: SelectPublishMediaRequest,
   ): Promise<SelectPublishMediaResult>;

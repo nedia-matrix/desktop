@@ -80,6 +80,7 @@ export interface UpdateUseCases {
 export interface PlatformContentUseCases {
   list(accountId: string): PlatformContentSnapshot[];
   latestRun(accountId: string): PlatformContentSyncRun | undefined;
+  contentUrl(accountId: string, externalContentId: string): string;
   refresh(accountId: string): Promise<PlatformContentSyncRun>;
 }
 
@@ -295,6 +296,8 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
     this.platformContents = {
       list: (accountId) => this.contentSync.list(accountId),
       latestRun: (accountId) => this.contentSync.latestRun(accountId),
+      contentUrl: (accountId, externalContentId) =>
+        this.contentSync.contentUrl(accountId, externalContentId),
       refresh: (accountId) => this.contentSync.refresh(accountId),
     };
     this.accounts = this.commands.guard(this.accounts);

@@ -1,3 +1,5 @@
+import { buildDouyinContentUrl } from "./content-url.js";
+
 export type DouyinPublishContentForm = "video" | "imageText";
 
 export interface DouyinPublishResponse {
@@ -82,11 +84,13 @@ export function classifyDouyinPublishResponse(
     return { kind: "verification_required", message };
   }
   if (postId && identityPattern.test(postId)) {
-    const route = contentForm === "imageText" ? "note" : "video";
     return {
       kind: "published",
       postId,
-      postUrl: `https://www.douyin.com/${route}/${postId}`,
+      postUrl: buildDouyinContentUrl(
+        postId,
+        contentForm === "imageText" ? "image_text" : "video",
+      ),
     };
   }
   if (
