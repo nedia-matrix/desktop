@@ -87,12 +87,11 @@ describe("Douyin data reader", () => {
     ).toThrow("账号与当前登录账号不一致");
   });
 
-  it("observes the first page and marks it partial when more content exists", async () => {
+  it("follows opaque cursors and retains completed pages after a later failure", async () => {
     const events: string[] = [];
-    const requestJson = vi.fn();
-    const waitForJsonResponse = vi.fn(async () => {
-      events.push("wait");
-      return {
+    const requestJson = vi
+      .fn()
+      .mockResolvedValueOnce({
         status: 200,
         ok: true,
         body: {
@@ -102,8 +101,9 @@ describe("Douyin data reader", () => {
           total: 2,
           aweme_list: [{ aweme_id: "content-1" }],
         },
-      };
-    });
+      })
+      .mockResolvedValueOnce({ status: 500, ok: false, body: null });
+    const waitForJsonResponse = vi.fn(async () => null);
     const result = await douyinPlatformModule.content!.read(
       {
         navigate: async () => {
@@ -116,19 +116,19 @@ describe("Douyin data reader", () => {
       "account-1",
     );
 
-    expect(events).toEqual(["wait", "navigate"]);
-    expect(requestJson).not.toHaveBeenCalled();
-    expect(waitForJsonResponse).toHaveBeenCalledWith({
+    expect(events).toEqual(["navigate"]);
+    expect(requestJson).toHaveBeenNthCalledWith(1, {
       method: "GET",
       url: expect.stringContaining("/janus/douyin/creator/pc/work_list"),
-      timeoutMs: 10_000,
     });
+    expect(requestJson.mock.calls[1]?.[0].url).toContain("max_cursor=cursor-2");
+    expect(waitForJsonResponse).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       complete: false,
       pagesRead: 1,
       remoteTotal: 2,
       items: [{ externalContentId: "content-1" }],
     });
-    expect(result.diagnostics?.[0]).toContain("翻页交互尚未验证");
+    expect(result.diagnostics?.[0]).toContain("第 2 页请求失败");
   });
 });

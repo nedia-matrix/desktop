@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.platform }} installer
+    name: Build ${{ matrix.platform }} package
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -24,7 +24,7 @@ jobs:
           - platform: Windows
             runner: windows-latest
             package_command: pnpm desktop:package:win
-            artifact_name: windows-installers
+            artifact_name: windows-packages
             artifact_path: apps/desktop/dist/*.exe
 
     steps:
@@ -56,8 +56,10 @@ jobs:
 
       - name: Package application
         run: ${{ matrix.package_command }}
+        env:
+          NEDIA_UPDATE_SOURCE: github
 
-      - name: Upload installer artifact
+      - name: Upload package artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
@@ -79,7 +81,13 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Publish release
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum -- * > SHA256SUMS.txt
+
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v3
         with:
           files: release-assets/*

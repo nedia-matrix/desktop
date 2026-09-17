@@ -85,7 +85,7 @@ describe("adapter architecture boundaries", () => {
   });
 
   it("keeps application services independent from Electron adapters", () => {
-    for (const directory of ["runtime-api/application"]) {
+    for (const directory of ["application"]) {
       for (const source of readTypeScriptFiles(directory)) {
         expect(source).not.toMatch(/from "electron"/);
         expect(source).not.toMatch(/from "electron-store"/);
@@ -98,7 +98,6 @@ describe("adapter architecture boundaries", () => {
     const source = readMainFile("application/nedia-matrix-application.ts");
     expect(source).toMatch(/@nedia-matrix\/account-management/);
     expect(source).toMatch(/@nedia-matrix\/publishing/);
-    expect(source).toMatch(/runtime-api\/public\.js/);
     expect(source).not.toMatch(/\/infrastructure\//);
   });
 
@@ -135,10 +134,6 @@ describe("adapter architecture boundaries", () => {
       "packages/contexts/publishing/package.json",
     );
     expect(publishingManifest).not.toMatch(/account-management/);
-    const bindingManifest = readWorkspaceFile(
-      "packages/contexts/runtime-account-binding/package.json",
-    );
-    expect(bindingManifest).not.toMatch(/account-management/);
   });
 
   it("keeps the manifest package as a pure compiler-boundary package", () => {
@@ -207,15 +202,6 @@ describe("adapter architecture boundaries", () => {
         "packages/contexts/account-management/src/application/account-types.ts",
       ),
     ).toMatch(/interface PlatformAccountView/);
-  });
-
-  it("uses explicit binding semantics inside the binding context", () => {
-    const source = readWorkspaceFile(
-      "packages/contexts/runtime-account-binding/src/index.ts",
-    );
-    expect(source).toMatch(/externalAccountReference/);
-    expect(source).toMatch(/localAccountId/);
-    expect(source).toMatch(/expectedLocalAccountId/);
   });
 
   it("keeps the Electron entrypoint free of composition logic", () => {

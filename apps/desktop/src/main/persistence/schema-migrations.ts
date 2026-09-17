@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DesktopMetadataDatabase } from "./desktop-metadata-database.js";
 
-export const metadataSchemaVersion = 2;
+export const metadataSchemaVersion = 3;
 
 export function migrateMetadataSchema(
   database: DesktopMetadataDatabase,
@@ -44,7 +44,6 @@ export function migrateMetadataSchema(
       CREATE INDEX account_profile ON platform_accounts(profile_id);
       CREATE TABLE account_replacement_aliases (id TEXT PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record))) STRICT;
       CREATE TABLE retired_browser_profiles (id TEXT PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record))) STRICT;
-      CREATE TABLE runtime_account_bindings (platform_account_id TEXT PRIMARY KEY, runtime_account_id TEXT NOT NULL UNIQUE REFERENCES platform_accounts(id), record TEXT NOT NULL CHECK(json_valid(record))) STRICT;
       CREATE TABLE publications (id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, record TEXT NOT NULL CHECK(json_valid(record))) STRICT;
       CREATE TABLE publication_observation_inbox (event_id TEXT PRIMARY KEY, publication_id TEXT NOT NULL REFERENCES publications(id), sequence INTEGER NOT NULL CHECK(sequence >= 1), record TEXT NOT NULL CHECK(json_valid(record))) STRICT;
       PRAGMA user_version=1;
@@ -78,6 +77,25 @@ export function migrateMetadataSchema(
         .prepare("INSERT INTO schema_migrations VALUES (2, ?, ?)")
         .run(
           "Add platform content snapshots and sync runs",
+          new Date().toISOString(),
+        );
+    });
+    version = 2;
+  }
+  if (version === 2) {
+    if (existed)
+      database.backup(`${database.filename}.before-v3-${randomUUID()}.sqlite`);
+    database.transaction(() => {
+      sql.exec(`
+        DROP TABLE IF EXISTS runtime_account_bindings;
+        DELETE FROM legacy_imports
+          WHERE source = 'matrix-runtime-account-bindings';
+        PRAGMA user_version=3;
+      `);
+      sql
+        .prepare("INSERT INTO schema_migrations VALUES (3, ?, ?)")
+        .run(
+          "Remove Web account bindings from the local runtime",
           new Date().toISOString(),
         );
     });

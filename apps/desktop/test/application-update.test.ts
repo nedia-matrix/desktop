@@ -31,6 +31,12 @@ describe("application update", () => {
     expect(releasePageUrl("0.3.0-beta.1")).toBeNull();
   });
 
+  it("builds Gitee release pages when Gitee is selected", () => {
+    expect(releasePageUrl("0.3.0", "gitee")).toBe(
+      "https://gitee.com/nedia-matrix/desktop/releases#release-v0.3.0",
+    );
+  });
+
   it("reads the latest stable tag from the GitHub Releases API", async () => {
     const fetcher = vi.fn(async () => {
       return Response.json({ tag_name: "v0.3.0" });
@@ -45,6 +51,24 @@ describe("application update", () => {
         headers: expect.objectContaining({
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28",
+        }),
+      }),
+    );
+  });
+
+  it("reads the latest stable tag from the Gitee Releases API", async () => {
+    const fetcher = vi.fn(async () => {
+      return Response.json({ tag_name: "v0.3.0" });
+    });
+
+    await expect(
+      findLatestRelease(fetcher as typeof globalThis.fetch, "gitee"),
+    ).resolves.toEqual(latestRelease);
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://gitee.com/api/v5/repos/nedia-matrix/desktop/releases/latest",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Accept: "application/json",
         }),
       }),
     );

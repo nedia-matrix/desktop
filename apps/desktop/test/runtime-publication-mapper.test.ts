@@ -11,8 +11,7 @@ const request = {
   target: {
     platform: "douyin",
     contentForm: "video",
-    platformAccountId: "platform-account-1",
-    runtimeAccountId: "account-1",
+    externalAccountId: "external-account-1",
   },
   content: {
     title: "标题",
@@ -39,6 +38,51 @@ describe("runtime publication mapping", () => {
         target: { ...request.target, submissionMode: "automatic" },
       }),
     ).toThrow("does not accept submissionMode");
+  });
+
+  it("requires platform identity and rejects local or Web account IDs", () => {
+    expect(() =>
+      parseRuntimePublicationRequest({
+        ...request,
+        target: {
+          ...request.target,
+          externalAccountId: undefined,
+        },
+      }),
+    ).toThrow("target.externalAccountId");
+    expect(() =>
+      parseRuntimePublicationRequest({
+        ...request,
+        target: {
+          ...request.target,
+          platformAccountId: "web-account-1",
+        },
+      }),
+    ).toThrow("externalAccountId");
+    expect(() =>
+      parseRuntimePublicationRequest({
+        ...request,
+        target: {
+          ...request.target,
+          runtimeAccountId: "account-1",
+        },
+      }),
+    ).toThrow("externalAccountId");
+  });
+
+  it("rejects platform identity fields longer than 128 characters", () => {
+    expect(() =>
+      parseRuntimePublicationRequest({
+        ...request,
+        target: { ...request.target, platform: "p".repeat(129) },
+      }),
+    ).toThrow("target.platform must not exceed 128 characters");
+    expect(() =>
+      parseRuntimePublicationRequest({
+        ...request,
+        target: { ...request.target, externalAccountId: "a".repeat(129) },
+      }),
+    ).toThrow("target.externalAccountId must not exceed 128 characters");
   });
 
   it("exposes cancelled as a retryable terminal result", () => {

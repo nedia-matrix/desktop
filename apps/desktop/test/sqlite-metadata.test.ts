@@ -307,7 +307,37 @@ describe("SQLite desktop metadata", () => {
     expect(snapshot.prepare("PRAGMA user_version").get()?.user_version).toBe(0);
     snapshot.close();
   });
-  it("creates one database, imports four missing sources once, and persists after reopen", () => {
+
+  it("removes the legacy runtime binding table while upgrading schema v2", () => {
+    const root = directory();
+    const metadata = open(root);
+    metadata.database.connection.exec(`
+      CREATE TABLE runtime_account_bindings (
+        platform_account_id TEXT PRIMARY KEY,
+        runtime_account_id TEXT NOT NULL,
+        record TEXT NOT NULL
+      );
+      DELETE FROM legacy_imports;
+      DELETE FROM schema_migrations WHERE version=3;
+      PRAGMA user_version=2;
+    `);
+    metadata.database.close();
+
+    const upgraded = open(root);
+    expect(
+      upgraded.database.connection
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='runtime_account_bindings'",
+        )
+        .get(),
+    ).toBeUndefined();
+    expect(
+      upgraded.database.connection.prepare("PRAGMA user_version").get()
+        ?.user_version,
+    ).toBe(3);
+  });
+
+  it("creates one database, imports three missing sources once, and persists after reopen", () => {
     const root = directory();
     const metadata = open(root);
     metadata.accounts.put(account);
@@ -320,7 +350,7 @@ describe("SQLite desktop metadata", () => {
       reopened.database.connection
         .prepare("SELECT * FROM legacy_imports")
         .all(),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
   });
 
   it("backs up and imports snapshots, retained flag, sequence and pending observations without changing JSON", () => {
@@ -334,7 +364,7 @@ describe("SQLite desktop metadata", () => {
     seed(root, [record]);
     const event = { ...eventFor(record), sequence: 4 };
     writeFileSync(
-      join(root, `${legacySources[3]}.json`),
+      join(root, `${legacySources[2]}.json`),
       JSON.stringify({ events: [event] }),
     );
     const before = readFileSync(join(root, `${legacySources[1]}.json`));
@@ -362,7 +392,6 @@ describe("SQLite desktop metadata", () => {
     "duplicate",
     "future",
     "duplicate-json-key",
-    "dangling-binding",
     "dangling-inbox",
   ])("rejects %s sources without partial import", (kind) => {
     const source = open();
@@ -381,27 +410,12 @@ describe("SQLite desktop metadata", () => {
       );
     if (kind === "duplicate-json-key")
       writeFileSync(
-        join(root, `${legacySources[3]}.json`),
-        '{"events":[],"events":[]}',
-      );
-    if (kind === "dangling-binding")
-      writeFileSync(
         join(root, `${legacySources[2]}.json`),
-        JSON.stringify({
-          bindings: [
-            {
-              platformAccountId: "remote",
-              runtimeAccountId: "missing",
-              platform: "douyin",
-              externalAccountId: "1",
-              boundAt: account.createdAt,
-            },
-          ],
-        }),
+        '{"events":[],"events":[]}',
       );
     if (kind === "dangling-inbox")
       writeFileSync(
-        join(root, `${legacySources[3]}.json`),
+        join(root, `${legacySources[2]}.json`),
         JSON.stringify({
           events: [{ ...eventFor(record), publicationId: "missing" }],
         }),
@@ -423,19 +437,11 @@ describe("SQLite desktop metadata", () => {
     const root = directory();
     const metadata = open(root);
     metadata.accounts.put(account);
-    metadata.bindings.put({
-      platformAccountId: "web-channel",
-      runtimeAccountId: account.id,
-      platform: account.platformId,
-      externalAccountId: account.externalAccountId,
-      boundAt: account.createdAt,
-    });
     const record = publication(publishing(metadata));
     metadata.inbox.append(eventFor(record));
     for (const table of [
       "platform_accounts",
       "publications",
-      "runtime_account_bindings",
       "publication_observation_inbox",
     ]) {
       metadata.database.connection.exec(`UPDATE ${table} SET record='{}'`);
@@ -445,7 +451,6 @@ describe("SQLite desktop metadata", () => {
     const reopened = open(root);
     expect(() => reopened.accounts.list()).toThrow();
     expect(() => reopened.publications.get(record.publication.id)).toThrow();
-    expect(() => reopened.bindings.list()).toThrow();
     expect(() => reopened.inbox.list()).toThrow();
   });
 
@@ -614,17 +619,10 @@ describe("SQLite desktop metadata", () => {
     expect(restarted.publications.get(record.publication.id)).toEqual(saved);
   });
 
-  it("atomically removes account and binding and persists profile cleanup across restart", () => {
+  it("atomically removes account and persists profile cleanup across restart", () => {
     const root = directory();
     const metadata = open(root);
     metadata.accounts.put(account);
-    metadata.bindings.put({
-      platformAccountId: "remote",
-      runtimeAccountId: account.id,
-      platform: account.platformId,
-      externalAccountId: account.externalAccountId,
-      boundAt: account.createdAt,
-    });
     const record = publication(publishing(metadata));
     metadata.database.connection.exec(
       "CREATE TRIGGER fail_intent BEFORE INSERT ON retired_browser_profiles BEGIN SELECT RAISE(ABORT, 'injected'); END",
@@ -633,13 +631,11 @@ describe("SQLite desktop metadata", () => {
       metadata.accounts.removeWithProfileIntent(account.id),
     ).toThrow();
     expect(metadata.accounts.get(account.id)).toEqual(account);
-    expect(metadata.bindings.list()).toHaveLength(1);
     metadata.database.connection.exec("DROP TRIGGER fail_intent");
     metadata.accounts.removeWithProfileIntent(account.id);
     metadata.database.close();
     const restarted = open(root);
     expect(restarted.accounts.list()).toEqual([]);
-    expect(restarted.bindings.list()).toEqual([]);
     expect(restarted.accounts.listRetiredProfiles()[0]?.reason).toBe(
       "account_deleted",
     );
@@ -744,6 +740,18 @@ describe("SQLite desktop metadata", () => {
     expect(metadata.platformContents.listByAccount(account.id)).toEqual([
       content,
     ]);
+    expect(
+      metadata.platformContents.findMany(account.id, [
+        "missing",
+        content.externalContentId,
+      ]),
+    ).toEqual([content]);
+    expect(
+      metadata.platformContents.findMany("another-account", [
+        content.externalContentId,
+      ]),
+    ).toEqual([]);
+    expect(metadata.platformContents.findMany(account.id, [])).toEqual([]);
     expect(metadata.platformContents.latestRun(account.id)).toEqual(run);
     const { contentUrl: _contentUrl, ...legacyContent } = content;
     metadata.database.connection
@@ -755,7 +763,7 @@ describe("SQLite desktop metadata", () => {
     expect(
       metadata.database.connection.prepare("PRAGMA user_version").get()
         ?.user_version,
-    ).toBe(2);
+    ).toBe(3);
 
     metadata.database.connection
       .prepare("DELETE FROM platform_accounts WHERE id=?")

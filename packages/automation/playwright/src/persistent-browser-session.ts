@@ -62,13 +62,12 @@ async function launchPersistentBrowser(
   preferredChannel?: string,
 ): Promise<{ context: BrowserContext; channel: string }> {
   const failures: string[] = [];
+  // TODO 实现 headless==true时 获取系统窗口大小赋值给viewport
+  // const viewport = headless ? {width,height} : null
   const sharedOptions: PersistentBrowserOptions = {
     headless,
     chromiumSandbox: true,
-    viewport: {
-      width: 1920,
-      height: 992,
-    },
+    viewport: null,
     acceptDownloads: true,
     handleSIGINT: false,
     handleSIGTERM: false,

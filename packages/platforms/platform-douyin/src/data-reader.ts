@@ -53,8 +53,15 @@ export function parseDouyinAccountProfile(
   const description = text(user.signature);
   const followerCount = count(user.follower_count);
   const followingCount = count(user.following_count);
+  const contentCount = count(user.aweme_count);
   const likeCount = count(user.total_favorited);
-  return { description, followerCount, followingCount, likeCount };
+  return {
+    description,
+    followerCount,
+    followingCount,
+    contentCount,
+    likeCount,
+  };
 }
 
 function parseContent(

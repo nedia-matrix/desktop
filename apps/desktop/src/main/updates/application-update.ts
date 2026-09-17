@@ -1,10 +1,52 @@
 import type { ApplicationUpdateCheckResult } from "../../bridge/contracts.js";
 
-const RELEASE_REPOSITORY_URL = "https://github.com/nedia-matrix/desktop";
-const LATEST_RELEASE_API_URL =
-  "https://api.github.com/repos/nedia-matrix/desktop/releases/latest";
+declare const __NEDIA_UPDATE_SOURCE__: string;
+
+export type ApplicationUpdateSource = "github" | "gitee";
+
+const UPDATE_SOURCES = {
+  github: {
+    latestReleaseApiUrl:
+      "https://api.github.com/repos/nedia-matrix/desktop/releases/latest",
+    releasePageUrl: (tag: string) =>
+      `https://github.com/nedia-matrix/desktop/releases/tag/${tag}`,
+    headers: {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "NediaMatrix-update-check",
+    },
+  },
+  gitee: {
+    latestReleaseApiUrl:
+      "https://gitee.com/api/v5/repos/nedia-matrix/desktop/releases/latest",
+    releasePageUrl: (tag: string) =>
+      `https://gitee.com/nedia-matrix/desktop/releases#release-${tag}`,
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "NediaMatrix-update-check",
+    },
+  },
+} as const satisfies Record<
+  ApplicationUpdateSource,
+  {
+    latestReleaseApiUrl: string;
+    releasePageUrl(tag: string): string;
+    headers: Readonly<Record<string, string>>;
+  }
+>;
+
 const VERSION_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)$/;
 const UPDATE_CHECK_TIMEOUT_MS = 8_000;
+
+function configuredUpdateSource(): ApplicationUpdateSource {
+  if (
+    typeof __NEDIA_UPDATE_SOURCE__ !== "undefined" &&
+    __NEDIA_UPDATE_SOURCE__ === "gitee"
+  ) {
+    return "gitee";
+  }
+  return "github";
+}
 
 export interface ApplicationRelease {
   version: string;
@@ -46,22 +88,23 @@ function releaseFromTag(tag: unknown): ApplicationRelease | null {
   };
 }
 
-export function releasePageUrl(version: string): string | null {
+export function releasePageUrl(
+  version: string,
+  source: ApplicationUpdateSource = configuredUpdateSource(),
+): string | null {
   const parsedVersion = parseVersion(version);
   if (!parsedVersion) return null;
 
-  return `${RELEASE_REPOSITORY_URL}/releases/tag/v${parsedVersion.join(".")}`;
+  return UPDATE_SOURCES[source].releasePageUrl(`v${parsedVersion.join(".")}`);
 }
 
 export async function findLatestRelease(
   fetcher: typeof globalThis.fetch = globalThis.fetch,
+  source: ApplicationUpdateSource = configuredUpdateSource(),
 ): Promise<ApplicationRelease> {
-  const response = await fetcher(LATEST_RELEASE_API_URL, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "NediaMatrix-update-check",
-    },
+  const configuration = UPDATE_SOURCES[source];
+  const response = await fetcher(configuration.latestReleaseApiUrl, {
+    headers: configuration.headers,
     signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
   });
   if (!response.ok) {

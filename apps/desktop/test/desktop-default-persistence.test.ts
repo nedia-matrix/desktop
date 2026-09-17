@@ -38,7 +38,7 @@ it("uses SQLite by default in normal userData and preserves legacy sources acros
     readOnly: true,
   });
   expect(db.prepare("SELECT count(*) AS n FROM legacy_imports").get()?.n).toBe(
-    4,
+    3,
   );
   db.close();
   writeFileSync(source, "changed frozen source");

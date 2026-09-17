@@ -1,5 +1,3 @@
-import { RuntimeBindingRoutes } from "../src/main/runtime-api/http/routes/binding-routes.js";
-import { RuntimeBindingVerifier } from "../src/main/runtime-api/application/runtime-binding-verifier.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -80,15 +78,11 @@ function createDependencies() {
       },
       platformContents: {
         listByAccount: () => [],
+        findMany: () => [],
         find: () => undefined,
         saveAll: () => undefined,
         saveRun: () => undefined,
         latestRun: () => undefined,
-      },
-      accountBindings: {
-        list: () => [],
-        put: () => undefined,
-        removeForRuntimeAccount: () => undefined,
       },
       browserSessions: {
         openForLogin: async () => undefined,
@@ -537,44 +531,6 @@ describe("NediaMatrixApplication", () => {
     expect(report).toHaveBeenCalledWith(
       expect.objectContaining({ event: "automation.control_completed" }),
     );
-  });
-
-  it("keeps Web binding refresh and verification silent", async () => {
-    const { dependencies } = createPublishFixture();
-    const show = vi.fn();
-    const application = new NediaMatrixApplication({
-      ...dependencies,
-      accountBindings: {
-        ...dependencies.accountBindings,
-        list: () => [
-          {
-            platformAccountId: "web-account",
-            runtimeAccountId: "account-1",
-            platform: "douyin",
-            externalAccountId: "external-1",
-            boundAt: "2026-08-10T00:00:00.000Z",
-          },
-        ],
-      },
-      notices: { show },
-    } as never);
-    const verifier = new RuntimeBindingVerifier(application);
-    await verifier.verify("web-account", "account-1", "douyin");
-    expect(show).not.toHaveBeenCalled();
-    const response = { statusCode: 0, setHeader: vi.fn(), end: vi.fn() };
-    await new RuntimeBindingRoutes(application, verifier).verify(
-      response as never,
-      "web-account",
-    );
-    expect(response.statusCode).toBe(200);
-    expect(show).not.toHaveBeenCalled();
-    await new RuntimeBindingRoutes(application, verifier).verify(
-      response as never,
-      "web-account",
-      true,
-    );
-    expect(response.statusCode).toBe(200);
-    expect(show).not.toHaveBeenCalled();
   });
 
   it("refreshes accounts through the API without a sync notice", async () => {

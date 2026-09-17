@@ -65,11 +65,6 @@ export class SqliteAccountRepository extends AccountStateRepository {
   removeWithProfileIntent(accountId: string, now = new Date()): void {
     this.database.transaction(() => {
       const account = this.require(accountId);
-      this.database.connection
-        .prepare(
-          "DELETE FROM runtime_account_bindings WHERE runtime_account_id=?",
-        )
-        .run(accountId);
       this.remove(accountId);
       const profile = {
         profileId: account.profileId,

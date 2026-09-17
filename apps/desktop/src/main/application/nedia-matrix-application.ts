@@ -44,26 +44,7 @@ import type {
 import type { PlatformRegistry } from "../platforms/platform-registry.js";
 import { toPlatformSummary } from "../platforms/platform-summary.js";
 
-import {
-  RuntimeAccountBindingService,
-  type RuntimeAccountBindingServiceDependencies,
-  type BindAccountCommand,
-  type VerifyAccountBindingQuery,
-} from "../runtime-api/public.js";
 import { ApplicationCommandGate } from "./application-command-gate.js";
-
-export interface AccountBindingUseCases {
-  list(): ReturnType<RuntimeAccountBindingService["list"]>;
-  bind(
-    command: BindAccountCommand,
-  ): ReturnType<RuntimeAccountBindingService["bind"]>;
-  verify(
-    query: VerifyAccountBindingQuery & { notifyOnSuccess?: boolean },
-  ): ReturnType<RuntimeAccountBindingService["verify"]>;
-  removeForRuntimeAccount(
-    runtimeAccountId: string,
-  ): ReturnType<RuntimeAccountBindingService["removeForRuntimeAccount"]>;
-}
 
 export interface RuntimeUseCases {
   status(): LocalRuntimeStatus;
@@ -79,16 +60,27 @@ export interface UpdateUseCases {
 
 export interface PlatformContentUseCases {
   list(accountId: string): PlatformContentSnapshot[];
+  queryByExternalIdentity(request: {
+    platformId: string;
+    externalAccountId: string;
+    externalContentIds: readonly string[];
+  }): {
+    contents: PlatformContentSnapshot[];
+    latestRun: PlatformContentSyncRun | undefined;
+  };
   latestRun(accountId: string): PlatformContentSyncRun | undefined;
   contentUrl(accountId: string, externalContentId: string): string;
   refresh(accountId: string): Promise<PlatformContentSyncRun>;
+  refreshByExternalIdentity(request: {
+    platformId: string;
+    externalAccountId: string;
+  }): Promise<PlatformContentSyncRun>;
 }
 
 export interface NediaMatrixUseCases {
   readonly platforms: PlatformRegistry;
   readonly platformSummaries: () => PlatformSummary[];
   readonly accounts: AccountUseCases;
-  readonly accountBindings: AccountBindingUseCases;
   readonly publications: PublicationUseCases;
   readonly platformContents: PlatformContentUseCases;
   readonly runtime: RuntimeUseCases;
@@ -109,7 +101,6 @@ interface NediaMatrixApplicationDependencies {
   updates: UpdateUseCases;
   accountStore: AccountRepository;
   platformContents: PlatformContentRepository;
-  accountBindings: RuntimeAccountBindingServiceDependencies["accountBindings"];
   browserSessions: PublicationApplicationDependencies["browser"] &
     Omit<BrowserSessionPort, "openForVerification"> & {
       openForVerification(
@@ -143,14 +134,12 @@ export type { PrepareRemoteDraftRequest };
 export class NediaMatrixApplication implements NediaMatrixUseCases {
   private readonly commands = new ApplicationCommandGate();
   private readonly accountApplication: AccountService;
-  private readonly bindings: RuntimeAccountBindingService;
   private readonly publishing: PublicationService;
   private readonly contentSync: PlatformContentService;
 
   readonly accounts: AccountUseCases;
   readonly platforms: PlatformRegistry;
   readonly platformSummaries: () => PlatformSummary[];
-  readonly accountBindings: AccountBindingUseCases;
   readonly publications: PublicationUseCases;
   readonly platformContents: PlatformContentUseCases;
   readonly runtime: RuntimeUseCases;
@@ -177,11 +166,6 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
         dependencies.accountPublications.isActive(accountId),
       onAccountsChanged: () =>
         dependencies.eventSink?.publish({ type: "accounts.changed" }),
-    });
-    this.bindings = new RuntimeAccountBindingService({
-      accountBindings: dependencies.accountBindings,
-      accounts: this.accountApplication,
-      now: dependencies.now,
     });
     this.publishing = new PublicationService({
       platforms: dependencies.platforms,
@@ -263,6 +247,10 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
     this.accounts = {
       list: () => this.accountApplication.listAccounts(),
       resolve: (request) => this.accountApplication.resolveAccount(request),
+      resolveByExternalIdentity: (request) =>
+        this.accountApplication.resolveByExternalIdentity(request),
+      verifyByExternalIdentity: (request) =>
+        this.accountApplication.verifyByExternalIdentity(request),
       create: (request) => this.accountApplication.createAccount(request),
       openLogin: (request) => this.accountApplication.openLogin(request),
       open: (request) => this.accountApplication.openAccount(request),
@@ -273,13 +261,6 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       remove: (request) => this.accountApplication.removeAccount(request),
       cleanupRetiredProfiles: () =>
         this.accountApplication.cleanupRetiredProfiles(),
-    };
-    this.accountBindings = {
-      list: () => this.bindings.list(),
-      bind: (command) => this.bindings.bind(command),
-      verify: (query) => this.bindings.verify(query),
-      removeForRuntimeAccount: (accountId) =>
-        this.bindings.removeForRuntimeAccount(accountId),
     };
     this.publications = {
       list: () => this.publishing.list(),
@@ -295,13 +276,32 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
     };
     this.platformContents = {
       list: (accountId) => this.contentSync.list(accountId),
+      queryByExternalIdentity: (request) => {
+        const account = this.accountApplication.resolveByExternalIdentity({
+          platformId: request.platformId,
+          externalAccountId: request.externalAccountId,
+        });
+        return {
+          contents: this.contentSync.findMany(
+            account.id,
+            request.externalContentIds,
+          ),
+          latestRun: this.contentSync.latestRun(account.id),
+        };
+      },
       latestRun: (accountId) => this.contentSync.latestRun(accountId),
       contentUrl: (accountId, externalContentId) =>
         this.contentSync.contentUrl(accountId, externalContentId),
       refresh: (accountId) => this.contentSync.refresh(accountId),
+      refreshByExternalIdentity: (request) => {
+        const account = this.accountApplication.resolveByExternalIdentity({
+          platformId: request.platformId,
+          externalAccountId: request.externalAccountId,
+        });
+        return this.contentSync.refresh(account.id);
+      },
     };
     this.accounts = this.commands.guard(this.accounts);
-    this.accountBindings = this.commands.guard(this.accountBindings);
     this.publications = this.commands.guard(this.publications);
     this.platformContents = this.commands.guard(this.platformContents);
   }

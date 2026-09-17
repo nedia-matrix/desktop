@@ -1,13 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
-import { RuntimeBindingVerifier } from "../application/runtime-binding-verifier.js";
 import { RuntimeEventBuffer } from "../events/runtime-event-buffer.js";
 import { runtimePublicationEvent } from "../mapping/runtime-publication-mapper.js";
 import { writeJson } from "./http-json.js";
 import { RuntimeAccountRoutes } from "./routes/account-routes.js";
-import { RuntimeBindingRoutes } from "./routes/binding-routes.js";
 import { RuntimeEventRoutes } from "./routes/event-routes.js";
+import { RuntimePlatformContentRoutes } from "./routes/platform-content-routes.js";
 import { RuntimePublicationRoutes } from "./routes/publication-routes.js";
 
 export type RuntimeEvent =
@@ -28,27 +27,26 @@ export interface LocalRuntimeHandshake {
     multipleAccountsPerPlatform: boolean;
     backgroundObservation: boolean;
     localPublicationArchive: boolean;
+    platformIdentityAddressing: boolean;
+    platformContentSnapshots: boolean;
+    platformContentSync: boolean;
   };
 }
 
 export class RuntimeRouter {
   private readonly events = new RuntimeEventBuffer<RuntimeEvent>();
   private readonly accountRoutes: RuntimeAccountRoutes;
-  private readonly bindingRoutes: RuntimeBindingRoutes;
   private readonly eventRoutes = new RuntimeEventRoutes(this.events);
+  private readonly platformContentRoutes: RuntimePlatformContentRoutes;
   private readonly publicationRoutes: RuntimePublicationRoutes;
 
   constructor(
     private readonly application: NediaMatrixUseCases,
     private readonly handshake: LocalRuntimeHandshake,
   ) {
-    const bindingVerifier = new RuntimeBindingVerifier(application);
     this.accountRoutes = new RuntimeAccountRoutes(application);
-    this.bindingRoutes = new RuntimeBindingRoutes(application, bindingVerifier);
-    this.publicationRoutes = new RuntimePublicationRoutes(
-      application,
-      bindingVerifier,
-    );
+    this.platformContentRoutes = new RuntimePlatformContentRoutes(application);
+    this.publicationRoutes = new RuntimePublicationRoutes(application);
   }
 
   open(): void {
@@ -91,6 +89,20 @@ export class RuntimeRouter {
       void this.publicationRoutes.create(request, response);
       return true;
     }
+    if (
+      request.method === "POST" &&
+      url.pathname === "/v1/platform-content-syncs"
+    ) {
+      void this.platformContentRoutes.sync(request, response);
+      return true;
+    }
+    if (
+      request.method === "POST" &&
+      url.pathname === "/v1/platform-content-snapshots/query"
+    ) {
+      void this.platformContentRoutes.query(request, response);
+      return true;
+    }
 
     const publicationMatch =
       /^\/v1\/publications\/([A-Za-z0-9._~-]{1,128})$/.exec(url.pathname);
@@ -120,29 +132,6 @@ export class RuntimeRouter {
       } else {
         void this.accountRoutes.refresh(response, accountActionMatch[1]);
       }
-      return true;
-    }
-    if (request.method === "GET" && url.pathname === "/v1/account-bindings") {
-      this.bindingRoutes.list(response);
-      return true;
-    }
-
-    const bindingMatch =
-      /^\/v1\/account-bindings\/([A-Za-z0-9._~-]{1,128})$/.exec(url.pathname);
-    if (request.method === "PUT" && bindingMatch?.[1]) {
-      void this.bindingRoutes.bind(request, response, bindingMatch[1]);
-      return true;
-    }
-    const bindingVerificationMatch =
-      /^\/v1\/account-bindings\/([A-Za-z0-9._~-]{1,128})\/(verify|refresh)$/.exec(
-        url.pathname,
-      );
-    if (request.method === "POST" && bindingVerificationMatch?.[1]) {
-      void this.bindingRoutes.verify(
-        response,
-        bindingVerificationMatch[1],
-        bindingVerificationMatch[2] === "refresh",
-      );
       return true;
     }
     return false;

@@ -27,12 +27,10 @@ import {
 } from "../publishing/infrastructure/publication-state-codec.js";
 import { SqlitePublicationRepository } from "../publishing/infrastructure/sqlite-publication-repository.js";
 import { SqlitePublicationObservationInbox } from "../publishing/infrastructure/sqlite-publication-observation-inbox.js";
-import { bindingRecord } from "../runtime-api/infrastructure/sqlite-runtime-binding-repository.js";
 
 export const legacySources = [
   "matrix-platform-accounts",
   "matrix-publications",
-  "matrix-runtime-account-bindings",
   "matrix-publication-observation-inbox",
 ] as const;
 
@@ -166,7 +164,6 @@ export function importLegacyStores(
     "platform_accounts",
     "account_replacement_aliases",
     "retired_browser_profiles",
-    "runtime_account_bindings",
     "publications",
     "publication_observation_inbox",
   ]) {
@@ -218,8 +215,9 @@ export function importLegacyStores(
           throw new Error("Legacy backup verification failed");
       }
   }
-  const [accountSource, publicationSource, bindingSource, inboxSource] =
-    sources.map((source) => (source.raw ? parseSource(source.raw) : {}));
+  const [accountSource, publicationSource, inboxSource] = sources.map(
+    (source) => (source.raw ? parseSource(source.raw) : {}),
+  );
   const accounts = accountsFrom(accountSource!);
   assertSupportedPublicationStoreVersion(publicationSource!.schemaVersion);
   const rawPublications = array(publicationSource!.publications ?? []);
@@ -291,17 +289,6 @@ export function importLegacyStores(
   }
   unique(publications.map((record) => record.publication.id));
   unique(publications.map((record) => record.requestId));
-  const bindings = array(bindingSource!.bindings ?? []).map(bindingRecord);
-  unique(bindings.map((binding) => binding.platformAccountId));
-  unique(bindings.map((binding) => binding.runtimeAccountId));
-  for (const binding of bindings) {
-    if (
-      !accounts.accounts.some(
-        (account) => account.id === binding.runtimeAccountId,
-      )
-    )
-      throw new Error("Dangling legacy account binding");
-  }
   const events = array(inboxSource!.events ?? []).map(observationEvent);
   unique(events.map((event) => event.eventId));
   for (const event of events) {
@@ -315,7 +302,7 @@ export function importLegacyStores(
     )
       throw new Error("Invalid legacy observation reference");
   }
-  for (const source of [accountSource!, bindingSource!, inboxSource!]) {
+  for (const source of [accountSource!, inboxSource!]) {
     if (source.schemaVersion !== undefined)
       throw new Error("Unsupported legacy source schema");
   }
@@ -359,24 +346,14 @@ export function importLegacyStores(
     new SqliteAccountRepository(database).importState(accounts);
     const repository = new SqlitePublicationRepository(database);
     for (const record of publications) repository.save(record);
-    for (const binding of bindings)
-      sql
-        .prepare("INSERT INTO runtime_account_bindings VALUES (?, ?, ?)")
-        .run(
-          binding.platformAccountId,
-          binding.runtimeAccountId,
-          JSON.stringify(binding),
-        );
     const allowedFields = [
       ["state", "accounts"],
       ["schemaVersion", "publications"],
-      ["bindings"],
       ["events"],
     ];
     for (const [index, source] of [
       accountSource!,
       publicationSource!,
-      bindingSource!,
       inboxSource!,
     ].entries()) {
       if (
@@ -389,13 +366,11 @@ export function importLegacyStores(
     const counts = [
       accounts.accounts.length,
       publications.length,
-      bindings.length,
       events.length,
     ];
     const versions = [
       accountSource!.state ? "state:1" : "legacy",
       String(publicationSource!.schemaVersion ?? "legacy"),
-      "unversioned",
       "unversioned",
     ];
     for (const [index, source] of sources.entries())
@@ -421,8 +396,6 @@ export function importLegacyStores(
       ) ||
       sql.prepare("SELECT count(*) AS n FROM account_replacement_aliases").get()
         ?.n !== accounts.replacementAliases.length ||
-      sql.prepare("SELECT count(*) AS n FROM runtime_account_bindings").get()
-        ?.n !== bindings.length ||
       inbox.list().length !== events.length
     )
       throw new Error("Metadata import verification failed");

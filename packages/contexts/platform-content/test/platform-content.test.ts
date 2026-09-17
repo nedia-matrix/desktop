@@ -138,6 +138,14 @@ describe("PlatformContentService", () => {
     expect(service.contentUrl(account.id, "content-remote-1")).toBe(
       "https://www.douyin.com/video/content-remote-1",
     );
+    expect(
+      service.findMany(account.id, ["missing", "content-remote-1"]),
+    ).toMatchObject([
+      {
+        externalContentId: "content-remote-1",
+        metrics: { viewCount: 12 },
+      },
+    ]);
   });
 
   it("records a failed run and closes the sync page when identity changed", async () => {
@@ -207,6 +215,12 @@ function memoryRepository(): PlatformContentRepository {
   return {
     listByAccount: (accountId) =>
       [...contents.values()].filter((item) => item.accountId === accountId),
+    findMany: (accountId, externalContentIds) =>
+      [...contents.values()].filter(
+        (item) =>
+          item.accountId === accountId &&
+          externalContentIds.includes(item.externalContentId),
+      ),
     find: (accountId, externalContentId) =>
       [...contents.values()].find(
         (item) =>

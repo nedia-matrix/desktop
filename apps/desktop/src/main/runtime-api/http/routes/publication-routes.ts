@@ -2,20 +2,13 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { NediaMatrixUseCases } from "../../../application/nedia-matrix-application.js";
 import {
-  RuntimeBindingError,
-  type RuntimeBindingVerifier,
-} from "../../application/runtime-binding-verifier.js";
-import {
   parseRuntimePublicationRequest,
   runtimePublicationStatus,
 } from "../../mapping/runtime-publication-mapper.js";
 import { readJsonRequest, writeJson } from "../http-json.js";
 
 export class RuntimePublicationRoutes {
-  constructor(
-    private readonly application: NediaMatrixUseCases,
-    private readonly bindingVerifier: RuntimeBindingVerifier,
-  ) {}
+  constructor(private readonly application: NediaMatrixUseCases) {}
 
   async create(
     request: IncomingMessage,
@@ -25,12 +18,26 @@ export class RuntimePublicationRoutes {
       const input = parseRuntimePublicationRequest(
         await readJsonRequest(request),
       );
-      await this.bindingVerifier.verify(
-        input.platformAccountId,
-        input.runtimeAccountId,
-        input.platform,
-      );
-      const result = await this.application.publications.prepareRemote(input);
+      const existing = this.application.publications
+        .list()
+        .find((publication) => publication.requestId === input.requestId);
+      if (existing) {
+        writeJson(response, 202, runtimePublicationStatus(existing));
+        return;
+      }
+      const account = await this.application.accounts.verifyByExternalIdentity({
+        platformId: input.platform,
+        externalAccountId: input.externalAccountId,
+      });
+      const result = await this.application.publications.prepareRemote({
+        accountId: account.id,
+        requestId: input.requestId,
+        contentForm: input.contentForm,
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        assets: input.assets,
+      });
       if (result.status === "login_required") {
         writeJson(response, 409, {
           code: "NOT_LOGGED_IN",
@@ -58,19 +65,25 @@ export class RuntimePublicationRoutes {
       if (!summary) throw new Error("Publication was not persisted");
       writeJson(response, 202, runtimePublicationStatus(summary));
     } catch (error) {
-      const status =
-        error instanceof RuntimeBindingError
-          ? 409
-          : error instanceof TypeError
-            ? 400
-            : 500;
+      const identityError =
+        error instanceof Error &&
+        [
+          "ACCOUNT_NOT_FOUND",
+          "ACCOUNT_AMBIGUOUS",
+          "NOT_LOGGED_IN",
+          "ACCOUNT_IDENTITY_MISMATCH",
+        ].includes((error as Error & { code?: string }).code ?? "");
+      const status = identityError
+        ? 409
+        : error instanceof TypeError
+          ? 400
+          : 500;
       writeJson(response, status, {
-        code:
-          error instanceof RuntimeBindingError
-            ? error.code
-            : error instanceof TypeError
-              ? "INVALID_REQUEST"
-              : "PUBLISH_FAILED",
+        code: identityError
+          ? (error as Error & { code: string }).code
+          : error instanceof TypeError
+            ? "INVALID_REQUEST"
+            : "PUBLISH_FAILED",
         message: error instanceof Error ? error.message : "Publish failed",
       });
     }

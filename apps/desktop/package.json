@@ -1,14 +1,15 @@
 {
   "name": "@nedia-matrix/desktop",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
     "build": "electron-vite build",
     "dev": "electron-vite dev",
     "package:mac": "pnpm run build && electron-builder --mac --publish never",
-    "package:win": "pnpm run build && electron-builder --win --publish never",
+    "package:win": "pnpm run build && electron-builder --win nsis portable --x64 --publish never",
+    "package:win:portable": "pnpm run build && electron-builder --win portable --x64 --publish never",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
   },
@@ -19,7 +20,6 @@
     "@nedia-matrix/automation-playwright": "workspace:*",
     "@nedia-matrix/platform-sdk": "workspace:*",
     "@nedia-matrix/platform-content": "workspace:*",
-    "@nedia-matrix/runtime-account-binding": "workspace:*",
     "@nedia-matrix/platform-douyin": "workspace:*",
     "@nedia-matrix/platform-kuaishou": "workspace:*",
     "@nedia-matrix/platform-xiaohongshu": "workspace:*",
@@ -39,6 +39,10 @@
     "appId": "com.nediamatrix.desktop",
     "productName": "NediaMatrix",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
     "directories": {
       "output": "dist",
       "buildResources": "resources"
@@ -82,8 +86,12 @@
       ]
     },
     "nsis": {
+      "artifactName": "${productName}-${version}-win-setup-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-win-portable-${arch}.${ext}"
     }
   }
 }

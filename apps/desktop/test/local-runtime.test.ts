@@ -4,13 +4,19 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
 import type { PublicationSummary } from "@nedia-matrix/publishing";
+import type {
+  PlatformContentSnapshot,
+  PlatformContentSyncRun,
+} from "@nedia-matrix/platform-content";
 
 import {
   LocalRuntimeHttpServer,
   type LocalRuntimeHandshake,
 } from "../src/main/runtime-api/http/local-runtime-http-server.js";
-import { AccountReplacedError } from "@nedia-matrix/account-management";
-import type { RuntimeAccountBinding } from "../src/main/runtime-api/application/runtime-account-binding-service.js";
+import {
+  AccountReplacedError,
+  PlatformAccountIdentityError,
+} from "@nedia-matrix/account-management";
 
 const origin = "https://www.example.com";
 
@@ -50,6 +56,9 @@ const handshake: LocalRuntimeHandshake = {
     multipleAccountsPerPlatform: true,
     backgroundObservation: true,
     localPublicationArchive: true,
+    platformIdentityAddressing: true,
+    platformContentSnapshots: true,
+    platformContentSync: true,
   },
 };
 
@@ -74,37 +83,6 @@ const account: PlatformAccountSnapshot = {
   updatedAt: "2026-08-10T00:00:00.000Z",
 };
 
-function createAccountBindings() {
-  const bindings: RuntimeAccountBinding[] = [];
-  return {
-    bindings,
-    store: {
-      list: () => [...bindings],
-      put: (binding: RuntimeAccountBinding) => {
-        bindings.splice(
-          0,
-          bindings.length,
-          ...bindings.filter(
-            (candidate) =>
-              candidate.platformAccountId !== binding.platformAccountId &&
-              candidate.runtimeAccountId !== binding.runtimeAccountId,
-          ),
-          binding,
-        );
-      },
-      removeForRuntimeAccount: (runtimeAccountId: string) => {
-        bindings.splice(
-          0,
-          bindings.length,
-          ...bindings.filter(
-            (binding) => binding.runtimeAccountId !== runtimeAccountId,
-          ),
-        );
-      },
-    },
-  };
-}
-
 function createRuntimeApplication(
   initialAccounts: PlatformAccountSnapshot[] = [account],
   options?: {
@@ -122,7 +100,37 @@ function createRuntimeApplication(
   }));
   const actions: string[] = [];
   const publications: PublicationSummary[] = [];
-  const accountBindings = createAccountBindings();
+  const platformContents: PlatformContentSnapshot[] = [
+    {
+      id: "local-content-1",
+      accountId: account.id,
+      platformId: account.platformId,
+      externalContentId: "content-1",
+      contentUrl: "https://www.douyin.com/video/content-1",
+      contentType: "video",
+      title: "已有作品",
+      description: null,
+      coverUrl: null,
+      publishedAt: "2026-08-09T00:00:00.000Z",
+      platformStatus: "published",
+      metrics: { viewCount: 12, likeCount: 0 },
+      contentObservedAt: "2026-08-10T00:00:00.000Z",
+      metricsObservedAt: "2026-08-10T00:00:00.000Z",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    },
+  ];
+  const latestContentRun = (accountId: string): PlatformContentSyncRun => ({
+    id: "content-run-1",
+    accountId,
+    status: "partial",
+    startedAt: "2026-08-10T00:00:00.000Z",
+    completedAt: "2026-08-10T00:00:01.000Z",
+    pagesRead: 1,
+    itemsRead: 1,
+    remoteTotal: 2,
+    diagnostics: ["more pages were available"],
+  });
   const resolveAccount = (accountId: string) => {
     const replacementAlias =
       options?.replacementAlias?.candidateAccountId === accountId
@@ -141,6 +149,28 @@ function createRuntimeApplication(
       account: resolved,
       ...(replacementAlias ? { replacementAlias } : {}),
     };
+  };
+  const resolveExternalIdentity = (
+    platformId: string,
+    externalAccountId: string,
+  ) => {
+    const matches = accounts.filter(
+      (candidate) =>
+        candidate.lifecycle === "active" &&
+        candidate.platformId === platformId &&
+        candidate.externalAccountId === externalAccountId,
+    );
+    if (matches.length === 0)
+      throw new PlatformAccountIdentityError(
+        "ACCOUNT_NOT_FOUND",
+        "No local account matches the platform identity",
+      );
+    if (matches.length > 1)
+      throw new PlatformAccountIdentityError(
+        "ACCOUNT_AMBIGUOUS",
+        "Multiple local accounts match the platform identity",
+      );
+    return matches[0]!;
   };
   const legacyApplication = {
     listPlatforms: () => [
@@ -276,14 +306,12 @@ function createRuntimeApplication(
       );
       if (index === -1) throw new TypeError("Platform account does not exist");
       accounts.splice(index, 1);
-      accountBindings.store.removeForRuntimeAccount(accountId);
     },
   };
   return {
     accounts,
     actions,
     publications,
-    accountBindings,
     application: {
       platforms: {
         get: () => undefined,
@@ -297,6 +325,61 @@ function createRuntimeApplication(
         list: legacyApplication.listAccounts,
         resolve: ({ accountId }: { accountId: string }) =>
           resolveAccount(accountId),
+        resolveByExternalIdentity: ({
+          platformId,
+          externalAccountId,
+        }: {
+          platformId: string;
+          externalAccountId: string;
+        }) => {
+          return resolveExternalIdentity(platformId, externalAccountId);
+        },
+        verifyByExternalIdentity: async ({
+          platformId,
+          externalAccountId,
+        }: {
+          platformId: string;
+          externalAccountId: string;
+        }) => {
+          const matches = accounts.filter(
+            (candidate) =>
+              candidate.lifecycle === "active" &&
+              candidate.platformId === platformId &&
+              candidate.externalAccountId === externalAccountId,
+          );
+          if (matches.length === 0)
+            throw new PlatformAccountIdentityError(
+              "ACCOUNT_NOT_FOUND",
+              "No local account matches the platform identity",
+            );
+          if (matches.length > 1)
+            throw new PlatformAccountIdentityError(
+              "ACCOUNT_AMBIGUOUS",
+              "Multiple local accounts match the platform identity",
+            );
+          const resolved = matches[0]!;
+          const detected = await legacyApplication.verifyAccount({
+            accountId: resolved.id,
+          });
+          if (detected.status === "login_required")
+            throw Object.assign(
+              new Error("Runtime account is not authenticated"),
+              {
+                code: "NOT_LOGGED_IN",
+              },
+            );
+          if (
+            detected.status !== "authenticated" ||
+            detected.externalAccountId !== externalAccountId
+          )
+            throw Object.assign(
+              new Error("Runtime account identity does not match"),
+              {
+                code: "ACCOUNT_IDENTITY_MISMATCH",
+              },
+            );
+          return resolved;
+        },
         create: legacyApplication.createAccount,
         openLogin: legacyApplication.openLogin,
         open: legacyApplication.openAccount,
@@ -304,69 +387,6 @@ function createRuntimeApplication(
         verify: legacyApplication.verifyAccount,
         remove: legacyApplication.removeAccount,
         cleanupRetiredProfiles: async () => undefined,
-      },
-      accountBindings: {
-        list: () => accountBindings.store.list(),
-        bind: (command: {
-          platformAccountId: string;
-          runtimeAccountId: string;
-        }) => {
-          const account = accounts.find(
-            (candidate) => candidate.id === command.runtimeAccountId,
-          );
-          if (!account) throw new TypeError("Runtime account does not exist");
-          if (!account.externalAccountId) {
-            throw new TypeError(
-              "Runtime account does not have a stable identity",
-            );
-          }
-          const binding = {
-            platformAccountId: command.platformAccountId,
-            runtimeAccountId: account.id,
-            platform: account.platformId,
-            externalAccountId: account.externalAccountId,
-            boundAt: "2026-08-10T01:00:00.000Z",
-          };
-          accountBindings.store.put(binding);
-          return binding;
-        },
-        verify: async (query: {
-          platformAccountId: string;
-          runtimeAccountId?: string;
-          platform?: string;
-        }) => {
-          const binding = accountBindings.store
-            .list()
-            .find(
-              (candidate) =>
-                candidate.platformAccountId === query.platformAccountId,
-            );
-          if (!binding) throw new Error("Account binding does not exist");
-          const detected = await legacyApplication.verifyAccount({
-            accountId: binding.runtimeAccountId,
-          });
-          if (detected.status !== "authenticated") {
-            const error = new Error(
-              detected.status === "unknown"
-                ? detected.reason
-                : "Runtime account is not authenticated",
-            ) as Error & {
-              code: "ACCOUNT_IDENTITY_MISMATCH" | "NOT_LOGGED_IN";
-            };
-            error.code =
-              detected.status === "unknown"
-                ? "ACCOUNT_IDENTITY_MISMATCH"
-                : "NOT_LOGGED_IN";
-            throw error;
-          }
-          const verified = accounts.find(
-            (candidate) => candidate.id === binding.runtimeAccountId,
-          );
-          if (!verified) throw new Error("Runtime account does not exist");
-          return { account: verified, binding };
-        },
-        removeForRuntimeAccount: (runtimeAccountId: string) =>
-          accountBindings.store.removeForRuntimeAccount(runtimeAccountId),
       },
       publications: {
         list: legacyApplication.listPublications,
@@ -378,7 +398,53 @@ function createRuntimeApplication(
           throw new Error("not used");
         },
       },
+      platformContents: {
+        list: (accountId: string) =>
+          platformContents.filter((content) => content.accountId === accountId),
+        queryByExternalIdentity: ({
+          platformId,
+          externalAccountId,
+          externalContentIds,
+        }: {
+          platformId: string;
+          externalAccountId: string;
+          externalContentIds: readonly string[];
+        }) => {
+          const resolved = resolveExternalIdentity(
+            platformId,
+            externalAccountId,
+          );
+          return {
+            contents: platformContents.filter(
+              (content) =>
+                content.accountId === resolved.id &&
+                externalContentIds.includes(content.externalContentId),
+            ),
+            latestRun: latestContentRun(resolved.id),
+          };
+        },
+        latestRun: (accountId: string) => latestContentRun(accountId),
+        contentUrl: () => {
+          throw new Error("not used");
+        },
+        refresh: async (accountId: string) => latestContentRun(accountId),
+        refreshByExternalIdentity: async ({
+          platformId,
+          externalAccountId,
+        }: {
+          platformId: string;
+          externalAccountId: string;
+        }) => {
+          const resolved = resolveExternalIdentity(
+            platformId,
+            externalAccountId,
+          );
+          actions.push(`content-sync:${resolved.id}`);
+          return latestContentRun(resolved.id);
+        },
+      },
     },
+    platformContents,
   };
 }
 
@@ -498,15 +564,19 @@ describe("LocalRuntimeHttpServer", () => {
         nickname: "测试账号",
         externalAccountId: "external-1",
         avatarUrl: "https://example.com/avatar.png",
-        accountInfo: [{ key: "follower_count", value: 12800 }],
+        accountInfo: [
+          { key: "follower_count", value: 12800 },
+          { key: "following_count", value: 128 },
+        ],
         lastVerifiedAt: "2026-08-10T00:00:00.000Z",
       },
     ]);
   });
 
-  it("persists an explicit server-channel to local-runtime account binding", async () => {
-    const runtime = createRuntimeApplication();
-    const accountBindings = runtime.accountBindings;
+  it("queries cached platform content by stable external identity", async () => {
+    const runtime = createRuntimeApplication([
+      { ...account, status: "login_required" },
+    ]);
     const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
@@ -514,35 +584,149 @@ describe("LocalRuntimeHttpServer", () => {
     });
     servers.push(server);
     const port = await server.start();
-    const baseUrl = `http://127.0.0.1:${port}`;
-
-    const headers = {
-      "Content-Type": "application/json",
-    };
-    const binding = await fetch(
-      `${baseUrl}/v1/account-bindings/platform-account-1`,
+    const response = await fetch(
+      `http://127.0.0.1:${port}/v1/platform-content-snapshots/query`,
       {
-        body: JSON.stringify({ runtimeAccountId: account.id }),
-        headers,
-        method: "PUT",
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target: {
+            platform: "douyin",
+            externalAccountId: "external-1",
+          },
+          externalContentIds: ["content-1", "missing", "content-1"],
+        }),
       },
     );
 
-    expect(binding.status).toBe(200);
-    expect(await binding.json()).toEqual({
-      platformAccountId: "platform-account-1",
-      runtimeAccountId: account.id,
-      platform: "douyin",
-      externalAccountId: "external-1",
-      boundAt: "2026-08-10T01:00:00.000Z",
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      target: {
+        platform: "douyin",
+        externalAccountId: "external-1",
+      },
+      latestSync: {
+        status: "partial",
+        startedAt: "2026-08-10T00:00:00.000Z",
+        completedAt: "2026-08-10T00:00:01.000Z",
+        pagesRead: 1,
+        itemsRead: 1,
+        remoteTotal: 2,
+      },
+      results: [
+        {
+          externalContentId: "content-1",
+          status: "found",
+          snapshot: {
+            contentUrl: "https://www.douyin.com/video/content-1",
+            contentType: "video",
+            title: "已有作品",
+            description: null,
+            coverUrl: null,
+            publishedAt: "2026-08-09T00:00:00.000Z",
+            platformStatus: "published",
+            metrics: { viewCount: 12, likeCount: 0 },
+            contentObservedAt: "2026-08-10T00:00:00.000Z",
+            metricsObservedAt: "2026-08-10T00:00:00.000Z",
+          },
+        },
+        {
+          externalContentId: "missing",
+          status: "not_observed",
+          snapshot: null,
+        },
+      ],
     });
-    const listed = await fetch(`${baseUrl}/v1/account-bindings`, { headers });
-    expect(await listed.json()).toEqual(accountBindings.bindings);
+    expect(JSON.stringify(body)).not.toContain("account-1");
+    expect(JSON.stringify(body)).not.toContain("content-run-1");
+  });
+
+  it("syncs platform content by stable external identity", async () => {
+    const runtime = createRuntimeApplication();
+    const server = new LocalRuntimeHttpServer({
+      application: runtime.application,
+      handshake,
+      port: 0,
+    });
+    servers.push(server);
+    const port = await server.start();
+    const response = await fetch(
+      `http://127.0.0.1:${port}/v1/platform-content-syncs`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target: {
+            platform: "douyin",
+            externalAccountId: "external-1",
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      target: {
+        platform: "douyin",
+        externalAccountId: "external-1",
+      },
+      run: {
+        status: "partial",
+        pagesRead: 1,
+        itemsRead: 1,
+        remoteTotal: 2,
+        diagnostics: ["more pages were available"],
+      },
+    });
+    expect(runtime.actions).toContain("content-sync:account-1");
+    expect(JSON.stringify(body)).not.toContain("account-1");
+    expect(JSON.stringify(body)).not.toContain("content-run-1");
+  });
+
+  it("rejects local identity fields and reports missing content accounts", async () => {
+    const runtime = createRuntimeApplication([]);
+    const server = new LocalRuntimeHttpServer({
+      application: runtime.application,
+      handshake,
+      port: 0,
+    });
+    servers.push(server);
+    const port = await server.start();
+    const query = (body: object) =>
+      fetch(`http://127.0.0.1:${port}/v1/platform-content-snapshots/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    const internalIdentity = await query({
+      target: {
+        platform: "douyin",
+        externalAccountId: "external-1",
+        runtimeAccountId: "account-1",
+      },
+      externalContentIds: ["content-1"],
+    });
+    expect(internalIdentity.status).toBe(400);
+    expect(await internalIdentity.json()).toMatchObject({
+      code: "INVALID_REQUEST",
+    });
+
+    const missing = await query({
+      target: {
+        platform: "douyin",
+        externalAccountId: "external-1",
+      },
+      externalContentIds: ["content-1"],
+    });
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({ code: "ACCOUNT_NOT_FOUND" });
   });
 
   it("creates, opens, refreshes, and removes an isolated account", async () => {
     const runtime = createRuntimeApplication([]);
-    const accountBindings = runtime.accountBindings;
     const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
@@ -590,13 +774,6 @@ describe("LocalRuntimeHttpServer", () => {
       status: "connected",
     });
 
-    accountBindings.store.put({
-      platformAccountId: "platform-account-1",
-      runtimeAccountId: created.runtimeAccountId,
-      platform: "douyin",
-      externalAccountId: "refreshed-external",
-      boundAt: "2026-08-10T01:00:00.000Z",
-    });
     const removeResponse = await fetch(
       `${baseUrl}/v1/accounts/${created.runtimeAccountId}`,
       {
@@ -606,7 +783,21 @@ describe("LocalRuntimeHttpServer", () => {
     );
     expect(removeResponse.status).toBe(200);
     expect(runtime.accounts).toEqual([]);
-    expect(accountBindings.bindings).toEqual([]);
+  });
+
+  it("does not expose the removed account-binding routes", async () => {
+    const runtime = createRuntimeApplication();
+    const server = new LocalRuntimeHttpServer({
+      application: runtime.application,
+      handshake,
+      port: 0,
+    });
+    servers.push(server);
+    const port = await server.start();
+    const response = await fetch(
+      `http://127.0.0.1:${port}/v1/account-bindings`,
+    );
+    expect(response.status).toBe(404);
   });
 
   it("resolves a replaced candidate id without adding a new HTTP flow", async () => {
@@ -653,17 +844,107 @@ describe("LocalRuntimeHttpServer", () => {
     ]);
   });
 
-  it("rejects a binding when the verified stable identity changed", async () => {
+  it("reports missing and ambiguous platform identities", async () => {
+    const runtime = createRuntimeApplication([]);
+    const server = new LocalRuntimeHttpServer({
+      application: runtime.application,
+      handshake,
+      port: 0,
+    });
+    servers.push(server);
+    const port = await server.start();
+    const request = {
+      requestId: "identity-selection",
+      target: {
+        platform: "douyin",
+        contentForm: "video",
+        externalAccountId: "external-1",
+      },
+      content: {
+        title: "身份选择",
+        video: {
+          url: "https://assets.example.test/video.mp4",
+          name: "video.mp4",
+          type: "video/mp4",
+        },
+      },
+    };
+    const publish = () =>
+      fetch(`http://127.0.0.1:${port}/v1/publications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+
+    const missing = await publish();
+    expect(missing.status).toBe(409);
+    expect(await missing.json()).toMatchObject({ code: "ACCOUNT_NOT_FOUND" });
+
+    runtime.accounts.push(account, { ...account, id: "account-2" });
+    const ambiguous = await publish();
+    expect(ambiguous.status).toBe(409);
+    expect(await ambiguous.json()).toMatchObject({ code: "ACCOUNT_AMBIGUOUS" });
+    expect(runtime.publications).toEqual([]);
+  });
+
+  it("publishes through different local account ids for the same platform identity", async () => {
+    const firstRuntime = createRuntimeApplication([account]);
+    const secondRuntime = createRuntimeApplication([
+      { ...account, id: "account-on-second-desktop" },
+    ]);
+    const firstServer = new LocalRuntimeHttpServer({
+      application: firstRuntime.application,
+      handshake,
+      port: 0,
+    });
+    const secondServer = new LocalRuntimeHttpServer({
+      application: secondRuntime.application,
+      handshake: { ...handshake, instanceId: "second-runtime" },
+      port: 0,
+    });
+    servers.push(firstServer, secondServer);
+    const [firstPort, secondPort] = await Promise.all([
+      firstServer.start(),
+      secondServer.start(),
+    ]);
+    const request = {
+      requestId: "cross-desktop",
+      target: {
+        platform: "douyin",
+        contentForm: "video",
+        externalAccountId: "external-1",
+      },
+      content: {
+        title: "跨电脑发布",
+        video: {
+          url: "https://assets.example.test/video.mp4",
+          name: "video.mp4",
+          type: "video/mp4",
+        },
+      },
+    };
+    const publish = (port: number) =>
+      fetch(`http://127.0.0.1:${port}/v1/publications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+
+    const [first, second] = await Promise.all([
+      publish(firstPort),
+      publish(secondPort),
+    ]);
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(firstRuntime.publications[0]?.accountId).toBe("account-1");
+    expect(secondRuntime.publications[0]?.accountId).toBe(
+      "account-on-second-desktop",
+    );
+  });
+
+  it("rejects publication when the verified stable identity changed", async () => {
     const runtime = createRuntimeApplication([account], {
       verificationMismatch: true,
-    });
-    const accountBindings = runtime.accountBindings;
-    accountBindings.store.put({
-      platformAccountId: "platform-account-1",
-      runtimeAccountId: account.id,
-      platform: "douyin",
-      externalAccountId: "external-1",
-      boundAt: "2026-08-10T01:00:00.000Z",
     });
     const server = new LocalRuntimeHttpServer({
       application: runtime.application,
@@ -672,21 +953,6 @@ describe("LocalRuntimeHttpServer", () => {
     });
     servers.push(server);
     const port = await server.start();
-    const response = await fetch(
-      `http://127.0.0.1:${port}/v1/account-bindings/platform-account-1/verify`,
-      {
-        body: "{}",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        method: "POST",
-      },
-    );
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({
-      code: "ACCOUNT_IDENTITY_MISMATCH",
-    });
-
     const publication = await fetch(
       `http://127.0.0.1:${port}/v1/publications`,
       {
@@ -699,8 +965,7 @@ describe("LocalRuntimeHttpServer", () => {
           target: {
             platform: "douyin",
             contentForm: "video",
-            platformAccountId: "platform-account-1",
-            runtimeAccountId: account.id,
+            externalAccountId: "external-1",
           },
           content: {
             title: "不会发布",
@@ -722,16 +987,8 @@ describe("LocalRuntimeHttpServer", () => {
     expect(runtime.actions).not.toContain("publish:identity-mismatch");
   });
 
-  it("creates a bound publication once and restores its final status by request id", async () => {
+  it("creates a publication by external identity once and restores its final status by request id", async () => {
     const runtime = createRuntimeApplication();
-    const accountBindings = runtime.accountBindings;
-    accountBindings.store.put({
-      platformAccountId: "platform-account-1",
-      runtimeAccountId: account.id,
-      platform: "douyin",
-      externalAccountId: "external-1",
-      boundAt: "2026-08-10T01:00:00.000Z",
-    });
     const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
@@ -744,28 +1001,28 @@ describe("LocalRuntimeHttpServer", () => {
       "Content-Type": "application/json",
     };
 
+    const publicationRequest = {
+      requestId: "request-1",
+      target: {
+        platform: "douyin",
+        contentForm: "video",
+        externalAccountId: "external-1",
+      },
+      content: {
+        title: "测试视频",
+        body: { type: "plain_text", text: "正文" },
+        video: {
+          url: "https://assets.example.test/video.mp4",
+          name: "video.mp4",
+          type: "video/mp4",
+        },
+      },
+      limits: {},
+    };
     const created = await fetch(`${baseUrl}/v1/publications`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        requestId: "request-1",
-        target: {
-          platform: "douyin",
-          contentForm: "video",
-          platformAccountId: "platform-account-1",
-          runtimeAccountId: account.id,
-        },
-        content: {
-          title: "测试视频",
-          body: { type: "plain_text", text: "正文" },
-          video: {
-            url: "https://assets.example.test/video.mp4",
-            name: "video.mp4",
-            type: "video/mp4",
-          },
-        },
-        limits: {},
-      }),
+      body: JSON.stringify(publicationRequest),
     });
     expect(created.status).toBe(202);
     expect(await created.json()).toMatchObject({
@@ -794,6 +1051,24 @@ describe("LocalRuntimeHttpServer", () => {
       },
     });
 
+    runtime.accounts.splice(0);
+    const replay = await fetch(`${baseUrl}/v1/publications`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(publicationRequest),
+    });
+    expect(replay.status).toBe(202);
+    expect(await replay.json()).toMatchObject({
+      requestId: "request-1",
+      state: "published",
+    });
+    expect(
+      runtime.actions.filter((action) => action.startsWith("verify:")),
+    ).toEqual(["verify:account-1"]);
+    expect(
+      runtime.actions.filter((action) => action.startsWith("publish:")),
+    ).toEqual(["publish:request-1"]);
+
     const events = await fetch(`${baseUrl}/v1/events?after=0`, { headers });
     expect(await events.json()).toMatchObject({
       cursor: 1,
@@ -812,14 +1087,6 @@ describe("LocalRuntimeHttpServer", () => {
     const runtime = createRuntimeApplication([account], {
       publicationBusy: true,
     });
-    const accountBindings = runtime.accountBindings;
-    accountBindings.store.put({
-      platformAccountId: "platform-account-1",
-      runtimeAccountId: account.id,
-      platform: "douyin",
-      externalAccountId: "external-1",
-      boundAt: "2026-08-10T01:00:00.000Z",
-    });
     const server = new LocalRuntimeHttpServer({
       application: runtime.application,
       handshake,
@@ -837,8 +1104,7 @@ describe("LocalRuntimeHttpServer", () => {
         target: {
           platform: "douyin",
           contentForm: "video",
-          platformAccountId: "platform-account-1",
-          runtimeAccountId: account.id,
+          externalAccountId: "external-1",
         },
         content: {
           title: "测试视频",

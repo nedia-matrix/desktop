@@ -1,14 +1,16 @@
 import type { PublicationSummary } from "@nedia-matrix/publishing";
 
-import type {
-  PrepareRemoteDraftRequest,
-  RemotePublicationAsset,
-} from "@nedia-matrix/publishing";
+import type { RemotePublicationAsset } from "@nedia-matrix/publishing";
 
-export interface RuntimePublicationRequest extends PrepareRemoteDraftRequest {
+export interface RuntimePublicationRequest {
+  requestId: string;
   platform: string;
-  platformAccountId: string;
-  runtimeAccountId: string;
+  externalAccountId: string;
+  contentForm: "imageText" | "video";
+  title: string;
+  body: string;
+  tags: readonly string[];
+  assets: readonly RemotePublicationAsset[];
 }
 
 export function parseRuntimePublicationRequest(
@@ -28,14 +30,23 @@ export function parseRuntimePublicationRequest(
   if (!/^[A-Za-z0-9._~-]{1,128}$/.test(requestId)) {
     throw new TypeError("Invalid publication requestId");
   }
-  const platform = requireString(target.platform, "target.platform");
-  const platformAccountId = requireString(
-    target.platformAccountId,
-    "target.platformAccountId",
+  const platform = requireBoundedString(
+    target.platform,
+    "target.platform",
+    128,
   );
-  const runtimeAccountId = requireString(
-    target.runtimeAccountId,
-    "target.runtimeAccountId",
+  if (
+    target.platformAccountId !== undefined ||
+    target.runtimeAccountId !== undefined
+  ) {
+    throw new TypeError(
+      "Publication target must use externalAccountId; local and Web account IDs are not accepted",
+    );
+  }
+  const externalAccountId = requireBoundedString(
+    target.externalAccountId,
+    "target.externalAccountId",
+    128,
   );
   const contentForm = target.contentForm;
   if (contentForm !== "image_text" && contentForm !== "video") {
@@ -55,11 +66,9 @@ export function parseRuntimePublicationRequest(
       ? [parseAsset(content.video, "video", 0)]
       : parseImageAssets(content.images);
   return {
-    accountId: runtimeAccountId,
     requestId,
     platform,
-    platformAccountId,
-    runtimeAccountId,
+    externalAccountId,
     contentForm: contentForm === "image_text" ? "imageText" : "video",
     title,
     body,
@@ -211,4 +220,16 @@ function requireString(
     throw new TypeError(`${name} must be a string`);
   }
   return value;
+}
+
+function requireBoundedString(
+  value: unknown,
+  name: string,
+  maxLength: number,
+): string {
+  const result = requireString(value, name);
+  if (result.length > maxLength) {
+    throw new TypeError(`${name} must not exceed ${maxLength} characters`);
+  }
+  return result;
 }

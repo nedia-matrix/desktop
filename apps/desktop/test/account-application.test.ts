@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AccountService,
+  PlatformAccountIdentityError,
   type AccountServiceDependencies,
 } from "@nedia-matrix/account-management";
 import { AccountStateRepository } from "../src/main/accounts/infrastructure/account-state-repository.js";
@@ -42,6 +43,79 @@ const accountServiceDefaults = {
 afterEach(() => vi.useRealTimers());
 
 describe("account application", () => {
+  it("resolves and verifies an active account by platform identity", async () => {
+    const storedAccount: PlatformAccountSnapshot = {
+      ...account,
+      lifecycle: "active",
+      identityScheme: "douyin.short_id",
+      externalAccountId: "douyin-42",
+      nickname: "账号",
+      status: "authenticated",
+    };
+    const accounts = new Map([[storedAccount.id, storedAccount]]);
+    const close = vi.fn(async () => undefined);
+    const application = new AccountService({
+      platforms: desktopPlatformRegistry,
+      ...accountServiceDefaults,
+      accountStore: memoryAccountStore(accounts),
+      browserSessions: {
+        openForLogin: async () => openedSession(),
+        openUserPage: async () => openedSession(),
+        openForVerification: async () => ({ ...openedSession(), close }),
+        closeAutomation: async () => undefined,
+        removeProfile: async () => undefined,
+      },
+      removeAccountResources: async () => undefined,
+      sessionDetector: async () => ({
+        status: "authenticated",
+        identityScheme: "douyin.short_id",
+        externalAccountId: "douyin-42",
+        nickname: "账号",
+        avatarUrl: null,
+        source: "api",
+      }),
+    });
+
+    expect(
+      application.resolveByExternalIdentity({
+        platformId: "douyin",
+        externalAccountId: "douyin-42",
+      }),
+    ).toEqual(storedAccount);
+    await expect(
+      application.verifyByExternalIdentity({
+        platformId: "douyin",
+        externalAccountId: "douyin-42",
+      }),
+    ).resolves.toMatchObject({ id: storedAccount.id });
+    expect(close).toHaveBeenCalledOnce();
+
+    expect(() =>
+      application.resolveByExternalIdentity({
+        platformId: "douyin",
+        externalAccountId: "missing",
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "ACCOUNT_NOT_FOUND",
+        name: PlatformAccountIdentityError.name,
+      }),
+    );
+
+    accounts.set("account-2", { ...storedAccount, id: "account-2" });
+    expect(() =>
+      application.resolveByExternalIdentity({
+        platformId: "douyin",
+        externalAccountId: "douyin-42",
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "ACCOUNT_AMBIGUOUS",
+        name: PlatformAccountIdentityError.name,
+      }),
+    );
+  });
+
   it("notifies after account creation and completed removal", async () => {
     const accounts = new Map<string, PlatformAccountSnapshot>();
     let changes = 0;

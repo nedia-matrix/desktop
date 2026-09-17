@@ -14,7 +14,6 @@ import { AutomationTraceService } from "../diagnostics/automation-trace-service.
 import { JsonlAutomationLogSink } from "../diagnostics/jsonl-automation-log-sink.js";
 import { registerAutomationDiagnosticIpc } from "../diagnostics/ipc/register-automation-diagnostic-ipc.js";
 import type { PublicationObservationInbox } from "../publishing/observations/publication-observation-inbox.js";
-import type { RuntimeAccountBindingServiceDependencies } from "../runtime-api/application/runtime-account-binding-service.js";
 
 import { cleanupClosedBrowserSession } from "../accounts/application/account-resource-cleanup.js";
 import { PlaywrightBrowserSessionHost } from "../accounts/infrastructure/playwright-browser-session-host.js";
@@ -61,7 +60,6 @@ export class DesktopRuntime {
   private readonly mainWindow = new ElectronMainWindow();
   private readonly publicationRepository: PublicationRepository;
   private readonly publicationObservationInbox: PublicationObservationInbox;
-  private readonly runtimeAccountBindings: RuntimeAccountBindingServiceDependencies["accountBindings"];
   private readonly publishing: PublishingService;
   private readonly lifecycle = new ApplicationLifecycle();
   private readonly publicationObservations: PublicationObservationQueue;
@@ -81,7 +79,6 @@ export class DesktopRuntime {
     this.accountStore = this.metadata.accounts;
     this.publicationRepository = this.metadata.publications;
     this.publicationObservationInbox = this.metadata.inbox;
-    this.runtimeAccountBindings = this.metadata.bindings;
     this.publishing = new PublishingService(
       this.publicationRepository,
       { now: () => new Date() },
@@ -220,7 +217,6 @@ export class DesktopRuntime {
       accountPublications: this.accountPublications,
       accountStore: this.accountStore,
       platformContents: this.metadata.platformContents,
-      accountBindings: this.runtimeAccountBindings,
       browserSessions: this.browserSessions,
       mediaSelections: this.mediaSelections,
       publishObservations: this.publishObservations,
@@ -386,6 +382,9 @@ export class DesktopRuntime {
           multipleAccountsPerPlatform: true,
           backgroundObservation: true,
           localPublicationArchive: true,
+          platformIdentityAddressing: true,
+          platformContentSnapshots: true,
+          platformContentSync: true,
         },
       },
     });

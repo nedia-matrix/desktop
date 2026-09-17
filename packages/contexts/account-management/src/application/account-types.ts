@@ -86,6 +86,14 @@ export type DetectPlatformSessionResult =
 export interface AccountUseCases {
   list(): PlatformAccountView[];
   resolve(request: PlatformAccountRequest): ResolvedPlatformAccount;
+  resolveByExternalIdentity(request: {
+    platformId: string;
+    externalAccountId: string;
+  }): PlatformAccountSnapshot;
+  verifyByExternalIdentity(request: {
+    platformId: string;
+    externalAccountId: string;
+  }): Promise<PlatformAccountSnapshot>;
   create(request: CreatePlatformAccountRequest): PlatformAccountView;
   openLogin(
     request: OpenPlatformLoginRequest,

@@ -25,6 +25,10 @@ export interface PlatformContentSyncRun {
 
 export interface PlatformContentRepository {
   listByAccount(accountId: string): PlatformContentSnapshot[];
+  findMany(
+    accountId: string,
+    externalContentIds: readonly string[],
+  ): PlatformContentSnapshot[];
   find(
     accountId: string,
     externalContentId: string,
@@ -114,6 +118,22 @@ export class PlatformContentService {
   list(accountId: string): PlatformContentSnapshot[] {
     assertAccountId(accountId);
     return this.dependencies.repository.listByAccount(accountId);
+  }
+
+  findMany(
+    accountId: string,
+    externalContentIds: readonly string[],
+  ): PlatformContentSnapshot[] {
+    assertAccountId(accountId);
+    if (!Array.isArray(externalContentIds)) {
+      throw new TypeError("Platform content IDs must be an array");
+    }
+    for (const externalContentId of externalContentIds) {
+      if (typeof externalContentId !== "string" || !externalContentId.trim()) {
+        throw new TypeError("Platform content ID must be a non-empty string");
+      }
+    }
+    return this.dependencies.repository.findMany(accountId, externalContentIds);
   }
 
   latestRun(accountId: string): PlatformContentSyncRun | undefined {

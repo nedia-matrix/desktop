@@ -98,6 +98,20 @@ export class AccountReplacedError extends Error {
   }
 }
 
+export class PlatformAccountIdentityError extends Error {
+  constructor(
+    readonly code:
+      | "ACCOUNT_NOT_FOUND"
+      | "ACCOUNT_AMBIGUOUS"
+      | "NOT_LOGGED_IN"
+      | "ACCOUNT_IDENTITY_MISMATCH",
+    message: string,
+  ) {
+    super(message);
+    this.name = "PlatformAccountIdentityError";
+  }
+}
+
 export class AccountService {
   private readonly createId: () => string;
   private readonly now: () => Date;
@@ -149,6 +163,83 @@ export class AccountService {
     );
     this.assertAvailable(resolved.account.id);
     return resolved;
+  }
+
+  resolveByExternalIdentity(request: {
+    platformId: string;
+    externalAccountId: string;
+  }): PlatformAccountSnapshot {
+    if (
+      typeof request.platformId !== "string" ||
+      request.platformId.length === 0 ||
+      typeof request.externalAccountId !== "string" ||
+      request.externalAccountId.length === 0
+    ) {
+      throw new TypeError("Invalid platform account identity");
+    }
+    const matches = this.dependencies.accountStore
+      .list()
+      .filter(
+        (account) =>
+          account.lifecycle === "active" &&
+          account.platformId === request.platformId &&
+          account.externalAccountId === request.externalAccountId,
+      );
+    if (matches.length === 0) {
+      throw new PlatformAccountIdentityError(
+        "ACCOUNT_NOT_FOUND",
+        "No local account matches the platform identity",
+      );
+    }
+    if (matches.length > 1) {
+      throw new PlatformAccountIdentityError(
+        "ACCOUNT_AMBIGUOUS",
+        "Multiple local accounts match the platform identity",
+      );
+    }
+    return matches[0]!;
+  }
+
+  async verifyByExternalIdentity(request: {
+    platformId: string;
+    externalAccountId: string;
+  }): Promise<PlatformAccountSnapshot> {
+    const account = this.resolveByExternalIdentity(request);
+    const detected = await this.verifyAccount({ accountId: account.id });
+    if (detected.status === "login_required") {
+      throw new PlatformAccountIdentityError(
+        "NOT_LOGGED_IN",
+        "Runtime account is not authenticated",
+      );
+    }
+    if (detected.status === "unknown") {
+      throw new PlatformAccountIdentityError(
+        "ACCOUNT_IDENTITY_MISMATCH",
+        detected.reason,
+      );
+    }
+    if (
+      detected.externalAccountId !== request.externalAccountId ||
+      detected.status !== "authenticated"
+    ) {
+      throw new PlatformAccountIdentityError(
+        "ACCOUNT_IDENTITY_MISMATCH",
+        "Runtime account identity does not match the requested platform identity",
+      );
+    }
+    const current = this.dependencies.accountStore.get(account.id);
+    if (
+      !current ||
+      current.lifecycle !== "active" ||
+      current.platformId !== request.platformId ||
+      current.externalAccountId !== request.externalAccountId
+    ) {
+      throw new PlatformAccountIdentityError(
+        "ACCOUNT_IDENTITY_MISMATCH",
+        "Runtime account identity does not match the requested platform identity",
+      );
+    }
+    return current;
   }
 
   createAccount(request: CreatePlatformAccountRequest): PlatformAccountView {

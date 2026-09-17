@@ -65,6 +65,21 @@ export class SqlitePlatformContentRepository implements PlatformContentRepositor
       .map((row) => parseContent(JSON.parse(String(row.record))));
   }
 
+  findMany(
+    accountId: string,
+    externalContentIds: readonly string[],
+  ): PlatformContentSnapshot[] {
+    if (externalContentIds.length === 0) return [];
+    const placeholders = externalContentIds.map(() => "?").join(", ");
+    return this.database.connection
+      .prepare(
+        `SELECT record FROM platform_contents
+         WHERE account_id=? AND external_content_id IN (${placeholders})`,
+      )
+      .all(accountId, ...externalContentIds)
+      .map((row) => parseContent(JSON.parse(String(row.record))));
+  }
+
   find(
     accountId: string,
     externalContentId: string,
