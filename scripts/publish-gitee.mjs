@@ -10,6 +10,7 @@ const GITEE_REMOTE_NAME = "gitee";
 const GITEE_REMOTE_URL = "https://gitee.com/nedia-matrix/desktop.git";
 const GITEE_API_BASE = "https://gitee.com/api/v5/repos/nedia-matrix/desktop";
 const PUBLIC_ORIGIN_URL = "https://github.com/nedia-matrix/desktop.git";
+const DEFAULT_ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/";
 const VERSION_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/;
 const MAX_ATTACHMENT_BYTES = 100_000_000;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -27,6 +28,7 @@ function printHelp() {
 
 环境变量：
   GITEE_TOKEN                    必填，Gitee 私人令牌
+  ELECTRON_MIRROR                可选，Electron 下载镜像
 `);
 }
 
@@ -227,14 +229,6 @@ async function uploadAttachment(releaseId, filePath, token) {
   console.log(`上传完成：${payload.browser_download_url}`);
 }
 
-function previousVersionTag(currentTag) {
-  return run("git", ["tag", "--list", "--sort=-version:refname"], {
-    capture: true,
-  })
-    .split(/\r?\n/)
-    .find((tag) => VERSION_PATTERN.test(tag) && tag !== currentTag);
-}
-
 async function collectArtifacts(assetDirectory, version, platform) {
   const entries = await readdir(assetDirectory, { withFileTypes: true });
   const expectedNames = {
@@ -372,9 +366,11 @@ async function main() {
     }
     const buildEnvironment = {
       ...process.env,
+      ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || DEFAULT_ELECTRON_MIRROR,
       NEDIA_UPDATE_SOURCE: "gitee",
     };
     delete buildEnvironment.GITEE_TOKEN;
+    console.log(`Electron 下载镜像：${buildEnvironment.ELECTRON_MIRROR}`);
     for (const currentPlatform of platforms) {
       const packageCommand =
         currentPlatform === "mac"
@@ -417,10 +413,12 @@ async function main() {
     ]);
   }
 
-  const previousTag = previousVersionTag(options.tag);
-  const releaseBody = previousTag
-    ? `**完整变更**: https://gitee.com/nedia-matrix/desktop/compare/${previousTag}...${options.tag}`
-    : `NediaMatrix ${options.tag}`;
+  const releaseBody = `## 安装包说明
+
+- \`NediaMatrix-${version}-mac-arm64.dmg\`：适用于 Apple Silicon 芯片的 macOS
+- \`NediaMatrix-${version}-mac-x64.dmg\`：适用于 Intel 芯片的 macOS
+- \`NediaMatrix-${version}-win-setup-x64.exe\`：适用于 64 位 Windows，需要安装
+- \`NediaMatrix-${version}-win-portable-x64.exe\`：适用于 64 位 Windows，免安装绿色版`;
   let release = await getRelease(options.tag, token);
   if (release?.id) {
     await submitRelease(`/releases/${release.id}`, "PATCH", token, {
