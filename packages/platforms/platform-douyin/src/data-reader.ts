@@ -1,3 +1,4 @@
+import { navigateForJsonResponses } from "@nedia-matrix/platform-sdk";
 import type {
   PlatformAccountProfileCapability,
   PlatformAccountProfileData,
@@ -53,13 +54,11 @@ export function parseDouyinAccountProfile(
   const description = text(user.signature);
   const followerCount = count(user.follower_count);
   const followingCount = count(user.following_count);
-  const contentCount = count(user.aweme_count);
   const likeCount = count(user.total_favorited);
   return {
     description,
     followerCount,
     followingCount,
-    contentCount,
     likeCount,
   };
 }
@@ -171,13 +170,11 @@ export const douyinContentCapability: PlatformContentCapability = {
     client,
     expectedExternalAccountId,
   ): Promise<PlatformContentReadResult> {
-    const responsePromise = client.waitForJsonResponse({
-      method: "GET",
-      url: CONTENT_API_URL,
-      timeoutMs: 10_000,
-    });
-    await client.navigate(CONTENT_PAGE_URL);
-    const response = await responsePromise;
+    const [response] = await navigateForJsonResponses(
+      client,
+      CONTENT_PAGE_URL,
+      [{ method: "GET", url: CONTENT_API_URL, timeoutMs: 10_000 }],
+    );
     if (!response?.ok || response.body === null) {
       throw new Error("抖音作品列表首屏响应未出现");
     }

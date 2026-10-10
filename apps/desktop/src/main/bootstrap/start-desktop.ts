@@ -1,10 +1,21 @@
+import { desktopPreferences } from "../preferences/desktop-preferences.js";
+import { registerPreferencesIpc } from "../preferences/register-preferences-ipc.js";
+import {
+  assertUpdateSourceIdle,
+  updateSourceChanged,
+  recordApplicationUpdateStartup,
+} from "../updates/electron-application-update.js";
 import { app, dialog } from "electron";
 
 import {
   findNediaMatrixOpenUrl,
   isNediaMatrixOpenUrl,
 } from "../shell/protocol/custom-protocol.js";
-import { DesktopRuntime } from "./desktop-runtime.js";
+import {
+  DesktopRuntime,
+  flushStartupFailureDiagnostics,
+} from "./desktop-runtime.js";
+import { waitForShutdown } from "./runtime-cleanup.js";
 
 let desktopRuntime: DesktopRuntime | undefined;
 
@@ -33,8 +44,13 @@ if (!hasSingleInstanceLock) {
 }
 
 void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
-  .then(() => {
+  .then(async () => {
     if (!hasSingleInstanceLock) return;
+    registerPreferencesIpc(desktopPreferences(), {
+      assertIdle: assertUpdateSourceIdle,
+      changed: updateSourceChanged,
+    });
+    await recordApplicationUpdateStartup(false);
     desktopRuntime = new DesktopRuntime();
     desktopRuntime.start();
     const initialOpenUrl = findNediaMatrixOpenUrl(process.argv);
@@ -42,7 +58,13 @@ void (hasSingleInstanceLock ? app.whenReady() : Promise.resolve())
     desktopRuntime.openMainWindow();
     app.on("activate", () => desktopRuntime?.openMainWindow());
   })
-  .catch((error: unknown) => {
+  .catch(async (error: unknown) => {
+    // The constructor may have logged a SQLite failure before it could return.
+    // Give the bounded file queue a chance to persist that record before exit.
+    await waitForShutdown(
+      flushStartupFailureDiagnostics().catch(() => undefined),
+      2_000,
+    );
     console.error(
       "Failed to initialize Electron",
       error instanceof Error ? error.name : "UnknownError",

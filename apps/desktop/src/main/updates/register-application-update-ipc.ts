@@ -7,6 +7,21 @@ import type { NediaMatrixUseCases } from "../application/nedia-matrix-applicatio
 export function registerApplicationUpdateIpcHandler(
   application: Pick<NediaMatrixUseCases, "updates">,
 ): void {
+  ipcMain.handle(ipcChannels.getApplicationUpdateState, () =>
+    application.updates.state(),
+  );
+  ipcMain.handle(ipcChannels.downloadApplicationUpdate, () =>
+    application.updates.download(),
+  );
+  ipcMain.handle(ipcChannels.cancelApplicationUpdateDownload, () =>
+    application.updates.cancelDownload(),
+  );
+  ipcMain.handle(ipcChannels.installApplicationUpdate, () =>
+    application.updates.install(),
+  );
+  ipcMain.handle(ipcChannels.showApplicationUpdateFile, () =>
+    application.updates.showFile(),
+  );
   ipcMain.handle(ipcChannels.checkForApplicationUpdate, () =>
     application.updates.check(),
   );

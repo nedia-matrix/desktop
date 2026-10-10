@@ -12,9 +12,17 @@ import type {
   WorkflowInputs,
 } from "@nedia-matrix/automation-engine";
 import { createBrowserProfileId } from "@nedia-matrix/automation-playwright";
-import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
+import type {
+  AccountBrowserPage,
+  AccountDiagnosticPort,
+  AccountDiagnosticTrace,
+  PlatformAccountSnapshot,
+} from "@nedia-matrix/account-management";
 import {
   PublicationService,
+  PublicationArchiveMaintenance,
+  type PublicationArchiveAssetStore,
+  type PublicationArchiveRepository,
   type PublicationApplicationDependencies,
   type PublishAutomationDiagnosticPort,
   type PublicationUseCases,
@@ -36,6 +44,7 @@ import {
 } from "@nedia-matrix/platform-content";
 import type {
   ApplicationUpdateCheckResult,
+  ApplicationUpdateState,
   LocalRuntimeStatus,
   OpenApplicationUpdateDownloadRequest,
   PlatformSummary,
@@ -55,6 +64,11 @@ export interface RuntimeUseCases {
 
 export interface UpdateUseCases {
   check(): Promise<ApplicationUpdateCheckResult>;
+  state(): ApplicationUpdateState;
+  download(): Promise<void>;
+  cancelDownload(): Promise<void>;
+  install(): Promise<void>;
+  showFile(): Promise<void>;
   openDownload(request: OpenApplicationUpdateDownloadRequest): Promise<void>;
 }
 
@@ -82,6 +96,11 @@ export interface NediaMatrixUseCases {
   readonly platformSummaries: () => PlatformSummary[];
   readonly accounts: AccountUseCases;
   readonly publications: PublicationUseCases;
+  readonly publicationPlatformContent: (publicationId: string) => {
+    content: PlatformContentSnapshot | null;
+    latestRun: PlatformContentSyncRun | null;
+    accountMissing: boolean;
+  };
   readonly platformContents: PlatformContentUseCases;
   readonly runtime: RuntimeUseCases;
   readonly updates: UpdateUseCases;
@@ -103,10 +122,13 @@ interface NediaMatrixApplicationDependencies {
   platformContents: PlatformContentRepository;
   browserSessions: PublicationApplicationDependencies["browser"] &
     Omit<BrowserSessionPort, "openForVerification"> & {
+      hasPublicationPage?(publicationId: string): boolean;
+      hasAnyPublicationPage?(): boolean;
       openForVerification(
         account: Parameters<BrowserSessionPort["openForVerification"]>[0],
         platform: Parameters<BrowserSessionPort["openForVerification"]>[1],
-        diagnostics?: PlatformContentAutomationDiagnosticTrace,
+        diagnostics?:
+          AccountDiagnosticTrace | PlatformContentAutomationDiagnosticTrace,
       ): ReturnType<BrowserSessionPort["openForVerification"]>;
     };
   mediaSelections: PublicationApplicationDependencies["mediaSelections"] & {
@@ -117,10 +139,25 @@ interface NediaMatrixApplicationDependencies {
   };
   accountPublications: PublicationApplicationDependencies["accountPublications"];
   publishing: PublicationApplicationDependencies["publishing"];
+  publicationArchive: PublicationArchiveRepository;
+  publicationSelection?: NonNullable<
+    PublicationApplicationDependencies["selection"]
+  >;
+  publicationAttention: PublicationApplicationDependencies["attention"];
+  publicationQuery: PublicationApplicationDependencies["query"];
+  publicationArchiveAssets: PublicationArchiveAssetStore;
   remoteAssets: PublicationApplicationDependencies["remoteAssets"];
   notices?: PublicationApplicationDependencies["notices"];
+  confirmPublicationRisk?: PublicationApplicationDependencies["confirmPublicationRisk"];
   automationDiagnostics?: PublishAutomationDiagnosticPort &
-    PlatformContentAutomationDiagnosticPort;
+    PlatformContentAutomationDiagnosticPort &
+    AccountDiagnosticPort;
+  archiveDiagnostics?: {
+    report(input: {
+      event: string;
+      details: Readonly<Record<string, unknown>>;
+    }): void;
+  };
   createId?: (() => string) | undefined;
   now?: (() => Date) | undefined;
   sessionDetector?: typeof detectPlatformSession | undefined;
@@ -135,12 +172,14 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
   private readonly commands = new ApplicationCommandGate();
   private readonly accountApplication: AccountService;
   private readonly publishing: PublicationService;
+  private readonly archiveMaintenance: PublicationArchiveMaintenance;
   private readonly contentSync: PlatformContentService;
 
   readonly accounts: AccountUseCases;
   readonly platforms: PlatformRegistry;
   readonly platformSummaries: () => PlatformSummary[];
   readonly publications: PublicationUseCases;
+  readonly publicationPlatformContent: NediaMatrixUseCases["publicationPlatformContent"];
   readonly platformContents: PlatformContentUseCases;
   readonly runtime: RuntimeUseCases;
   readonly updates: UpdateUseCases;
@@ -152,7 +191,8 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
     this.platforms = dependencies.platforms;
     this.platformSummaries = () => this.platforms.list().map(toPlatformSummary);
     this.runtime = this.commands.guard(dependencies.runtime);
-    this.updates = this.commands.guard(dependencies.updates);
+    // Update commands own their mutex; tracking installation here would deadlock shutdown.
+    this.updates = dependencies.updates;
     this.accountApplication = new AccountService({
       platforms: dependencies.platforms,
       accountStore: dependencies.accountStore,
@@ -166,6 +206,7 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
         dependencies.accountPublications.isActive(accountId),
       onAccountsChanged: () =>
         dependencies.eventSink?.publish({ type: "accounts.changed" }),
+      diagnostics: dependencies.automationDiagnostics,
     });
     this.publishing = new PublicationService({
       platforms: dependencies.platforms,
@@ -176,8 +217,21 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       accountPublications: dependencies.accountPublications,
       observations: dependencies.publishObservations,
       publishing: dependencies.publishing,
-      verifyAccount: (request) =>
-        this.accountApplication.verifyAccount(request),
+      attention: dependencies.publicationAttention,
+      selection: dependencies.publicationSelection,
+      hasActivePublication: (publicationId) =>
+        dependencies.browserSessions.hasPublicationPage?.(publicationId) ??
+        false,
+      query: dependencies.publicationQuery,
+      resolveArchiveAssetPath: (relativePath) =>
+        dependencies.publicationArchiveAssets.resolvePath?.(relativePath) ??
+        Promise.resolve(undefined),
+      verifyAccount: (request, page) =>
+        this.accountApplication.verifyAccountOnPage(request, {
+          driver: page.driver as AccountBrowserPage["driver"],
+          sessionProbeClient:
+            page.sessionProbeClient as AccountBrowserPage["sessionProbeClient"],
+        }),
       createId,
       workflow: publicationWorkflowAdapter(
         dependencies.workflowExecutor ?? executeWorkflow,
@@ -207,7 +261,31 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       },
       automationDiagnostics: dependencies.automationDiagnostics,
       notices: dependencies.notices,
+      confirmPublicationRisk: dependencies.confirmPublicationRisk,
     });
+    this.archiveMaintenance = new PublicationArchiveMaintenance(
+      dependencies.publicationArchive,
+      dependencies.publicationArchiveAssets,
+      {
+        hasActiveTask: (publicationId) => {
+          const publication = dependencies.publishing.get(publicationId);
+          return publication
+            ? dependencies.accountPublications.isActive(
+                publication.publication.accountId,
+              ) ||
+                (dependencies.browserSessions.hasPublicationPage?.(
+                  publicationId,
+                ) ??
+                  false)
+            : false;
+        },
+        hasActiveAssetUsers: () =>
+          (dependencies.accountPublications.hasAnyActive?.() ?? false) ||
+          (dependencies.browserSessions.hasAnyPublicationPage?.() ?? false),
+        now: dependencies.now ?? (() => new Date()),
+      },
+      dependencies.archiveDiagnostics,
+    );
     this.contentSync = new PlatformContentService({
       accounts: {
         require: (accountId) => dependencies.accountStore.require(accountId),
@@ -264,8 +342,48 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
     };
     this.publications = {
       list: () => this.publishing.list(),
+      listTasks: () => this.publishing.listTasks(),
+      getTask: (publicationId) => this.publishing.getTask(publicationId),
+      recreateDraft: (publicationId) =>
+        this.publishing.recreateDraft(publicationId),
+      queryTasks: (request) => this.publishing.queryTasks(request),
+      resolveAttention: (request) => {
+        if (request.resolution === "confirmed_published")
+          this.requirePublicationContent(
+            request.publicationId,
+            request.manualPlatformContentId ?? "",
+          );
+        return this.publishing.resolveAttention(request);
+      },
+      reopenAttention: (publicationId) =>
+        this.publishing.reopenAttention(publicationId),
+      selectContent: (publicationId, externalContentId) => {
+        this.requirePublicationContent(publicationId, externalContentId);
+        return this.publishing.selectContent(publicationId, externalContentId);
+      },
+      archiveUsage: () => this.archiveMaintenance.usage(),
+      cleanupArchive: (policy) => this.archiveMaintenance.cleanup(policy),
+      setArchiveRetained: (publicationId, retained) => {
+        this.archiveMaintenance.setRetained(publicationId, retained);
+        const task = this.publishing.getTask(publicationId);
+        if (!task) throw new TypeError("Publication does not exist");
+        return task;
+      },
+      removeArchivePublication: (publicationId) =>
+        this.archiveMaintenance.removePublication(publicationId),
+      wasDeleted: (requestId) =>
+        dependencies.publicationArchive.isDeletedRequestId?.(requestId) ??
+        false,
       openReview: (request) => this.publishing.openReview(request),
-      publicationUrl: (request) => this.publishing.publicationUrl(request),
+      publicationUrl: (request) => {
+        const task = this.publishing.getTask(request.publicationId);
+        if (!task) throw new TypeError("Publication does not exist");
+        const selectedId =
+          task.selectedPlatformContentId ?? task.manualPlatformContentId;
+        return selectedId
+          ? this.contentSync.contentUrl(task.accountId, selectedId)
+          : this.publishing.publicationUrl(request);
+      },
       prepareRemote: (request) => this.publishing.prepareRemote(request),
       prepare: (request) => this.publishing.prepare(request),
       registerLocalMedia: (request) =>
@@ -273,6 +391,37 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
       recordObservation: (publicationId, result, sequence) =>
         this.publishing.recordObservation(publicationId, result, sequence),
       recoverInterrupted: () => this.publishing.recoverInterrupted(),
+    };
+    this.publicationPlatformContent = (publicationId) => {
+      const task = this.publishing.getTask(publicationId);
+      const contentId =
+        task?.selectedPlatformContentId ??
+        task?.manualPlatformContentId ??
+        task?.platformContentId;
+      if (!task || !contentId)
+        return { content: null, latestRun: null, accountMissing: false };
+      let account;
+      try {
+        account = this.accountApplication.resolveAccount({
+          accountId: task.accountId,
+        }).account;
+      } catch {
+        return { content: null, latestRun: null, accountMissing: true };
+      }
+      const content =
+        this.contentSync
+          .findMany(account.id, [contentId])
+          .find(
+            (item) =>
+              item.platformId === task.platformId &&
+              item.accountId === task.accountId &&
+              item.externalContentId === contentId,
+          ) ?? null;
+      return {
+        content,
+        latestRun: this.contentSync.latestRun(account.id) ?? null,
+        accountMissing: false,
+      };
     };
     this.platformContents = {
       list: (accountId) => this.contentSync.list(accountId),
@@ -303,11 +452,41 @@ export class NediaMatrixApplication implements NediaMatrixUseCases {
     };
     this.accounts = this.commands.guard(this.accounts);
     this.publications = this.commands.guard(this.publications);
+    this.publicationPlatformContent = this.commands.guard({
+      get: this.publicationPlatformContent,
+    }).get;
     this.platformContents = this.commands.guard(this.platformContents);
+  }
+
+  freezeForUpdate(): () => void {
+    return this.commands.freezeForUpdate();
   }
 
   stopCommands(): Promise<void> {
     return this.commands.stop();
+  }
+
+  private requirePublicationContent(
+    publicationId: string,
+    externalContentId: string,
+  ): PlatformContentSnapshot {
+    const task = this.publishing.getTask(publicationId);
+    if (!task) throw new TypeError("Publication does not exist");
+    if (typeof externalContentId !== "string" || !externalContentId.trim())
+      throw new TypeError("A platform work must be selected");
+    const content = this.contentSync
+      .findMany(task.accountId, [externalContentId])
+      .find(
+        (item) =>
+          item.platformId === task.platformId &&
+          item.accountId === task.accountId &&
+          item.externalContentId === externalContentId,
+      );
+    if (!content)
+      throw new TypeError(
+        "Selected platform work is not in this account snapshot",
+      );
+    return content;
   }
 }
 

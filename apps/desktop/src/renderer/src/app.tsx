@@ -1,23 +1,16 @@
 import type { PlatformAccountView } from "@nedia-matrix/account-management";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
+import type { ApplicationUpdateState } from "../../bridge/contracts.js";
 import type { AppContext, AppStatus } from "./app-context.js";
+import { GlobalStatus } from "./components/global-status.js";
 import { Icon, type IconName } from "./components/icons.js";
 import { PlatformIcon } from "./components/platform-icon.js";
 import { AccountsPage, AddAccountDialog } from "./pages/accounts-page.js";
-import { PublicationsPage } from "./pages/publications-page.js";
-import { PublishPage } from "./pages/publish-page.js";
-import {
-  SettingsPage,
-  type UpdateCheckFeedback,
-} from "./pages/settings-page.js";
+import { PublishingPage } from "./pages/publishing-page.js";
+import { SettingsPage } from "./pages/settings-page.js";
 import { accountStatus, platformFor } from "./shared.js";
-import {
-  applyTheme,
-  loadThemePreference,
-  resolveTheme,
-  saveThemePreference,
-} from "./theme.js";
+import { applyTheme, resolveTheme, type ThemePreference } from "./theme.js";
 
 interface RouteDefinition {
   path: string;
@@ -37,11 +30,6 @@ const routes: readonly RouteDefinition[] = [
     icon: "publish",
   },
   {
-    path: "/publications",
-    title: "发布记录",
-    icon: "content",
-  },
-  {
     path: "/settings",
     title: "设置",
     icon: "settings",
@@ -57,7 +45,13 @@ interface RuntimeSummary {
   port: number | null;
 }
 
-export function App({ context }: { context: AppContext }) {
+export function App({
+  context,
+  initialThemePreference,
+}: {
+  context: AppContext;
+  initialThemePreference: ThemePreference;
+}) {
   const [routePath, setRoutePath] = useState(routeFromHash);
   const [accounts, setAccounts] = useState<readonly PlatformAccountView[]>(
     context.accounts,
@@ -69,7 +63,9 @@ export function App({ context }: { context: AppContext }) {
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [status, setStatus] = useState<AppStatus>(context.currentStatus());
   const [statusVisible, setStatusVisible] = useState(true);
-  const [themePreference, setThemePreference] = useState(loadThemePreference);
+  const [themePreference, setThemePreference] = useState(
+    initialThemePreference,
+  );
   const [systemPrefersDark, setSystemPrefersDark] = useState(
     () => globalThis.matchMedia("(prefers-color-scheme: dark)").matches,
   );
@@ -81,17 +77,8 @@ export function App({ context }: { context: AppContext }) {
   });
   const [runtimeActionPending, setRuntimeActionPending] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [updateCheckPending, setUpdateCheckPending] = useState(false);
-  const [updateCheckFeedback, setUpdateCheckFeedback] =
-    useState<UpdateCheckFeedback | null>(null);
-  const [updateCheckCompleted, setUpdateCheckCompleted] = useState(false);
-  const [availableUpdateVersion, setAvailableUpdateVersion] = useState<
-    string | null
-  >(null);
-  const [currentApplicationVersion, setCurrentApplicationVersion] = useState<
-    string | null
-  >(null);
-  const [updateDownloadPending, setUpdateDownloadPending] = useState(false);
+  const [applicationUpdate, setApplicationUpdate] =
+    useState<ApplicationUpdateState | null>(null);
 
   const route = useMemo(
     () => routes.find(({ path }) => path === routePath) ?? routes[0]!,
@@ -101,7 +88,9 @@ export function App({ context }: { context: AppContext }) {
   const selectedAccount = accounts.find(({ id }) => id === selectedAccountId);
 
   useEffect(() => {
-    const updateRoute = () => setRoutePath(routeFromHash());
+    const updateRoute = () => {
+      setRoutePath(routeFromHash());
+    };
     globalThis.addEventListener("hashchange", updateRoute);
     if (!globalThis.location.hash) globalThis.location.hash = "/accounts";
     return () => globalThis.removeEventListener("hashchange", updateRoute);
@@ -157,6 +146,7 @@ export function App({ context }: { context: AppContext }) {
 
   useEffect(() => {
     setStatusVisible(true);
+    if (status.kind === "error") return;
     const timeout = globalThis.setTimeout(() => setStatusVisible(false), 5_000);
     return () => globalThis.clearTimeout(timeout);
   }, [status]);
@@ -171,8 +161,7 @@ export function App({ context }: { context: AppContext }) {
 
   useEffect(() => {
     applyTheme(resolvedTheme);
-    saveThemePreference(themePreference);
-  }, [resolvedTheme, themePreference]);
+  }, [resolvedTheme]);
 
   useEffect(() => {
     let active = true;
@@ -218,53 +207,25 @@ export function App({ context }: { context: AppContext }) {
     }
   };
 
-  const checkForApplicationUpdate = async () => {
-    setUpdateCheckPending(true);
-    setUpdateCheckFeedback(null);
-    try {
-      const result = await window.matrix.checkForApplicationUpdate();
-      setCurrentApplicationVersion(result.currentVersion);
-      if (result.status === "up-to-date") {
-        setAvailableUpdateVersion(null);
-        setUpdateCheckFeedback({
-          message: `当前已是最新版本 v${result.currentVersion}`,
-          error: false,
-        });
-      } else {
-        setAvailableUpdateVersion(result.latestVersion);
-      }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      setUpdateCheckFeedback({
-        message: isUpdateNetworkError(detail)
-          ? "无法连接 GitHub，请检查网络后重试"
-          : `检查失败：${detail}`,
-        error: true,
-      });
-    } finally {
-      setUpdateCheckCompleted(true);
-      setUpdateCheckPending(false);
-    }
-  };
-
-  const openApplicationUpdateDownload = async (version: string) => {
-    setUpdateDownloadPending(true);
-    setUpdateCheckFeedback(null);
-    try {
-      await window.matrix.openApplicationUpdateDownload({ version });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      setUpdateCheckFeedback({
-        message: `打开下载页失败：${detail}`,
-        error: true,
-      });
-    } finally {
-      setUpdateDownloadPending(false);
-    }
-  };
-
   useEffect(() => {
-    void checkForApplicationUpdate();
+    let active = true;
+    const accept = (next: ApplicationUpdateState) => {
+      if (active) {
+        setApplicationUpdate((previous) =>
+          !previous || next.revision >= previous.revision ? next : previous,
+        );
+      }
+    };
+    const unsubscribe = window.matrix.onApplicationUpdateChanged(accept);
+    void window.matrix
+      .getApplicationUpdateState()
+      .then(accept)
+      .catch(() => undefined);
+    void window.matrix.checkForApplicationUpdate().catch(() => undefined);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   const updateAccounts = (
@@ -346,17 +307,38 @@ export function App({ context }: { context: AppContext }) {
             )}
           </nav>
 
-          <nav class="primary-navigation" aria-label="全局功能">
-            {routes.slice(1).map((item) => (
-              <NavigationLink item={item} active={item.path === route.path} />
-            ))}
-          </nav>
-          <span class="sidebar-version">
-            {runtime.version ? `v${runtime.version}` : "v—"}
-          </span>
+          <footer class="sidebar-status-bar">
+            <div class="sidebar-version">
+              <span class="sidebar-version-number" title="应用版本">
+                {runtime.version ? `v${runtime.version}` : "v—"}
+              </span>
+              {applicationUpdate?.latestVersion && (
+                <a
+                  class="sidebar-update-badge"
+                  href="#/settings"
+                  title={`发现新版本 v${applicationUpdate.latestVersion}，点击查看软件更新`}
+                  aria-label={`发现新版本 v${applicationUpdate.latestVersion}，查看软件更新`}
+                >
+                  <span class="sidebar-update-dot" aria-hidden="true" />
+                  新版本
+                </a>
+              )}
+            </div>
+            <nav class="primary-navigation" aria-label="全局功能">
+              {routes.slice(1).map((item) => (
+                <NavigationLink item={item} active={item.path === route.path} />
+              ))}
+            </nav>
+          </footer>
         </aside>
 
         <section class="workspace" key={route.path}>
+          {statusVisible && (
+            <GlobalStatus
+              status={status}
+              onDismiss={() => setStatusVisible(false)}
+            />
+          )}
           {route.path === "/accounts" ? (
             <AccountsPage
               context={context}
@@ -364,42 +346,32 @@ export function App({ context }: { context: AppContext }) {
               onAccountsChanged={updateAccounts}
             />
           ) : route.path === "/publish" ? (
-            <PublishPage
+            <PublishingPage
               context={context}
               preferredAccountId={selectedAccountId}
             />
-          ) : route.path === "/publications" ? (
-            <PublicationsPage context={context} />
           ) : (
             <SettingsPage
               context={context}
               themePreference={themePreference}
-              onThemePreferenceChange={setThemePreference}
+              onThemePreferenceChange={(theme) => {
+                void window.matrix
+                  .updatePreferences({ appearance: { theme } })
+                  .then((preferences) =>
+                    setThemePreference(preferences.appearance.theme),
+                  )
+                  .catch(() =>
+                    context.setStatus("外观设置保存失败，请重试", "error"),
+                  );
+              }}
               resolvedTheme={resolvedTheme}
               runtime={runtime}
               runtimeActionPending={runtimeActionPending}
               runtimeError={runtimeError}
               onRuntimeRunningChange={setRuntimeRunning}
-              updateCheckPending={updateCheckPending}
-              updateCheckCompleted={updateCheckCompleted}
-              updateCheckFeedback={updateCheckFeedback}
-              availableUpdateVersion={availableUpdateVersion}
-              currentApplicationVersion={
-                currentApplicationVersion ?? runtime.version
-              }
-              updateDownloadPending={updateDownloadPending}
-              onCheckForApplicationUpdate={checkForApplicationUpdate}
-              onOpenApplicationUpdateDownload={openApplicationUpdateDownload}
             />
           )}
         </section>
-
-        {statusVisible && (
-          <output class={`global-status status-${status.kind}`}>
-            <span class="status-indicator" aria-hidden="true" />
-            {status.message}
-          </output>
-        )}
       </main>
 
       {showAddAccount && (
@@ -416,12 +388,6 @@ export function App({ context }: { context: AppContext }) {
   );
 }
 
-function isUpdateNetworkError(message: string): boolean {
-  return /TimeoutError|AbortError|fetch failed|Error invoking remote method/i.test(
-    message,
-  );
-}
-
 function NavigationLink({
   item,
   active,
@@ -434,15 +400,18 @@ function NavigationLink({
       class={active ? "active" : undefined}
       href={`#${item.path}`}
       aria-current={active ? "page" : undefined}
+      aria-label={item.title}
+      title={item.title}
     >
-      <Icon name={item.icon} />
-      <span>{item.title}</span>
+      <Icon name={item.icon} size={16} />
     </a>
   );
 }
 
 function routeFromHash(): string {
-  const path = globalThis.location.hash.slice(1) || "/accounts";
+  const path =
+    globalThis.location.hash.slice(1).split("?", 1)[0] || "/accounts";
+  if (path === "/publications") return "/publish";
   return routes.some((route) => route.path === path) ? path : "/accounts";
 }
 

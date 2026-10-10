@@ -6,6 +6,7 @@ import {
   type StartPublicationInput,
 } from "@nedia-matrix/publishing";
 import type { PlatformAccountSnapshot } from "@nedia-matrix/account-management";
+import type { PublishResultEvent } from "@nedia-matrix/platform-sdk";
 
 import { RuntimeAccountRoutes } from "../src/main/runtime-api/http/routes/account-routes.js";
 
@@ -35,6 +36,18 @@ function createDependencies() {
         }),
       },
       updates: {
+        state: () => ({
+          revision: 0,
+          phase: "idle" as const,
+          currentVersion: "test",
+          downloadAvailable: false,
+          receivedBytes: 0,
+          totalBytes: 0,
+        }),
+        download: async () => undefined,
+        cancelDownload: async () => undefined,
+        install: async () => undefined,
+        showFile: async () => undefined,
         check: async () => ({
           status: "up-to-date" as const,
           currentVersion: "test",
@@ -151,10 +164,12 @@ function createPublishFixture(options?: {
   detectedExternalAccountId?: string;
   existingPublication?: boolean;
   failSubmit?: boolean;
+  failPreparation?: boolean;
   publishDuringPreparation?: boolean;
+  verifyDuringPreparation?: boolean;
   loginRequired?: boolean;
   mediaSelectionUnavailable?: boolean;
-  platformId?: "douyin" | "kuaishou";
+  platformId?: "douyin" | "kuaishou" | "xiaohongshu";
   contentForm?: "imageText" | "video";
 }) {
   const { accounts, accountUpdates, dependencies: base } = createDependencies();
@@ -184,7 +199,9 @@ function createPublishFixture(options?: {
   let publicationState = "preparing";
   let observationArmed = false;
   let publicationStarted = options?.existingPublication ?? false;
-  let finishObservation: () => void | Promise<void> = () => undefined;
+  let finishObservation: (
+    result?: PublishResultEvent,
+  ) => void | Promise<void> = () => undefined;
   let remoteSelection:
     | {
         resourceReferences: readonly string[];
@@ -212,6 +229,11 @@ function createPublishFixture(options?: {
   };
   const dependencies = {
     ...base,
+    publicationArchiveAssets: {
+      list: async () => [],
+      remove: async () => undefined,
+      resolvePath: async () => "/archive/image.png",
+    },
     browserSessions: {
       ...base.browserSessions,
       openUserPage: async () => undefined,
@@ -228,6 +250,7 @@ function createPublishFixture(options?: {
         sessionProbeClient: {},
         focus: async () => actions.push("focus"),
         handoff: async () => actions.push("handoff"),
+        bindPublication: () => undefined,
         verifyIdentity: async () => undefined,
         release: async () => undefined,
       }),
@@ -268,7 +291,9 @@ function createPublishFixture(options?: {
     },
     publishObservations: {
       stop: async () => undefined,
-      attach: (input: { onFinished?: () => void | Promise<void> }) => {
+      attach: (input: {
+        onFinished?: (result?: PublishResultEvent) => void | Promise<void>;
+      }) => {
         finishObservation = input.onFinished ?? (() => undefined);
         return {
           id: "observation-1",
@@ -378,6 +403,13 @@ function createPublishFixture(options?: {
           publicationState = "published";
           actions.push("observed:published");
         }
+        if (options?.verifyDuringPreparation) {
+          publicationState = "verifying";
+          actions.push("observed:verifying");
+        }
+        if (options?.failPreparation) {
+          throw new Error("editor fill failed");
+        }
       }
       if (options?.failSubmit && workflowId === "publish.submit") {
         throw new Error("submit click outcome is unknown");
@@ -389,13 +421,62 @@ function createPublishFixture(options?: {
     accounts,
     accountUpdates,
     dependencies,
-    finishObservation: () => finishObservation(),
+    finishObservation: (result?: PublishResultEvent) =>
+      finishObservation(result),
     preparationInput: () => preparationInput,
     prepareWorkflowInputs: () => prepareWorkflowInputs,
   };
 }
 
 describe("NediaMatrixApplication", () => {
+  it("accepts only a work from the publication account snapshot", () => {
+    const { dependencies } = createDependencies();
+    const candidate = {
+      accountId: "account-1",
+      platformId: "douyin",
+      externalContentId: "work-1",
+    };
+    const findMany = vi.fn(() => [candidate]);
+    const application = new NediaMatrixApplication({
+      ...dependencies,
+      platformContents: { ...dependencies.platformContents, findMany },
+    } as never);
+    const publishing = (
+      application as unknown as {
+        publishing: {
+          getTask: (id: string) => unknown;
+          selectContent: (id: string, contentId: string) => unknown;
+        };
+      }
+    ).publishing;
+    vi.spyOn(publishing, "getTask").mockReturnValue({
+      id: "publication-1",
+      accountId: "account-1",
+      platformId: "douyin",
+      state: "published",
+    });
+    const selectContent = vi
+      .spyOn(publishing, "selectContent")
+      .mockReturnValue({ id: "publication-1" });
+
+    expect(() =>
+      application.publications.selectContent?.("publication-1", "work-1"),
+    ).not.toThrow();
+    expect(selectContent).toHaveBeenCalledWith("publication-1", "work-1");
+    expect(findMany).toHaveBeenCalledWith("account-1", ["work-1"]);
+
+    candidate.accountId = "another-account";
+    expect(() =>
+      application.publications.selectContent?.("publication-1", "work-1"),
+    ).toThrow("not in this account snapshot");
+    candidate.accountId = "account-1";
+    candidate.platformId = "xiaohongshu";
+    expect(() =>
+      application.publications.selectContent?.("publication-1", "work-1"),
+    ).toThrow("not in this account snapshot");
+    expect(selectContent).toHaveBeenCalledTimes(1);
+  });
+
   it("creates an isolated account through a transport-independent use case", () => {
     const { dependencies } = createDependencies();
     const application = new NediaMatrixApplication(dependencies);
@@ -437,6 +518,107 @@ describe("NediaMatrixApplication", () => {
     expect(accounts.size).toBe(0);
   });
 
+  it.each(["manual_confirmation", "automatic"] as const)(
+    "verifies the actual publish page once during %s preparation",
+    async (submissionMode) => {
+      const { dependencies } = createPublishFixture();
+      const openForVerification = vi.spyOn(
+        dependencies.browserSessions,
+        "openForVerification",
+      );
+      const openUserPage = vi.spyOn(
+        dependencies.browserSessions,
+        "openUserPage",
+      );
+      const openForPublication = vi.spyOn(
+        dependencies.browserSessions,
+        "openForPublication",
+      );
+      const detector = vi.spyOn(dependencies, "sessionDetector");
+      const application = new NediaMatrixApplication(dependencies as never);
+      const result = await application.publications.prepare({
+        accountId: "account-1",
+        contentForm: "imageText",
+        mediaSelectionId: "selection-1",
+        title: "标题",
+        body: "正文",
+        submissionMode,
+      });
+      expect(result.status).toBe(
+        submissionMode === "automatic"
+          ? "submission_started"
+          : "ready_for_review",
+      );
+      expect(openForPublication).toHaveBeenCalledOnce();
+      const page = await openForPublication.mock.results[0]!.value;
+      expect(detector).toHaveBeenCalledExactlyOnceWith(
+        desktopPlatformRegistry.require("douyin").accounts.detection,
+        page.driver,
+        page.sessionProbeClient,
+      );
+      expect(openForVerification).not.toHaveBeenCalled();
+      expect(openUserPage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("releases the unbound page and lease when login prevents preparation", async () => {
+    const { dependencies } = createPublishFixture({ loginRequired: true });
+    const page = await dependencies.browserSessions.openForPublication();
+    const release = vi.spyOn(page, "release");
+    const bindPublication = vi.spyOn(page, "bindPublication");
+    const start = vi.spyOn(dependencies.publishing, "startPreparation");
+    dependencies.browserSessions.openForPublication = async () => page;
+    const application = new NediaMatrixApplication(dependencies as never);
+    expect(
+      await application.publications.prepare({
+        accountId: "account-1",
+        contentForm: "imageText",
+        mediaSelectionId: "selection-1",
+        title: "标题",
+        body: "正文",
+      }),
+    ).toEqual({ status: "login_required" });
+    expect(start).not.toHaveBeenCalled();
+    expect(bindPublication).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+    expect(dependencies.accountPublications.isActive("account-1")).toBe(false);
+  });
+
+  it("stops automatic submission if the account changes after preparation", async () => {
+    const { dependencies, actions } = createPublishFixture();
+    const getPublication = dependencies.publishing.get;
+    vi.spyOn(dependencies.publishing, "get").mockImplementation(
+      () =>
+        ({
+          ...getPublication(),
+          submissionEvidence: "none",
+        }) as never,
+    );
+    const page = await dependencies.browserSessions.openForPublication();
+    const verifyIdentity = vi
+      .spyOn(page, "verifyIdentity")
+      .mockRejectedValue(new Error("账号身份已变化"));
+    dependencies.browserSessions.openForPublication = async () => page;
+    const application = new NediaMatrixApplication(dependencies as never);
+    const result = await application.publications.prepare({
+      accountId: "account-1",
+      contentForm: "imageText",
+      mediaSelectionId: "selection-1",
+      title: "标题",
+      body: "正文",
+      submissionMode: "automatic",
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      message: "账号身份已变化",
+    });
+    expect(verifyIdentity).toHaveBeenCalledOnce();
+    expect(actions).toContain("workflow:publish.prepare.imageText");
+    expect(actions).not.toContain("workflow:publish.submit");
+    expect(actions).not.toContain("attempt");
+    expect(dependencies.accountPublications.isActive("account-1")).toBe(false);
+  });
+
   it("persists submitting and arms observation before automatic submit", async () => {
     const { actions, dependencies } = createPublishFixture();
     const application = new NediaMatrixApplication(dependencies as never);
@@ -454,9 +636,9 @@ describe("NediaMatrixApplication", () => {
     expect(actions).toEqual([
       "start",
       "ready",
-      "arm",
       "workflow:publish.prepare.imageText",
       "consume",
+      "arm",
       "mark:submitting",
       "attempt",
       "workflow:publish.submit",
@@ -484,6 +666,71 @@ describe("NediaMatrixApplication", () => {
         submissionMode: "automatic",
       }),
     ).resolves.toMatchObject({ status: "submission_started" });
+  });
+
+  it("records a failed publication preflight before the automation lease", async () => {
+    const { dependencies } = createPublishFixture();
+    const report = vi.fn();
+    const finish = vi.fn();
+    const start = vi.fn(() => ({
+      traceId: "trace-preflight",
+      bind: vi.fn(),
+      report,
+      execution: vi.fn(),
+      finish,
+    }));
+    const application = new NediaMatrixApplication({
+      ...dependencies,
+      automationDiagnostics: { start },
+    } as never);
+
+    await expect(
+      application.publications.prepare({
+        accountId: "account-1",
+        requestId: "request-preflight",
+        contentForm: "imageText",
+        mediaSelectionId: "selection-1",
+        title: "标题",
+        body: "正文",
+        sourcePublicationId: "missing-source",
+        submissionMode: "manual_confirmation",
+      }),
+    ).rejects.toThrow("Source publication must be terminal");
+    expect(start).toHaveBeenCalledWith({
+      operation: "publication.prepare",
+      requestId: "request-preflight",
+      accountId: "account-1",
+      platformId: "douyin",
+    });
+    expect(report).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "publication.preflight.failed",
+        details: expect.objectContaining({ stage: "source_publication" }),
+      }),
+    );
+    expect(finish).toHaveBeenCalledWith({ outcome: "failed" });
+    expect(dependencies.accountPublications.isActive("account-1")).toBe(false);
+  });
+
+  it("does not create an automation trace for malformed publication input", async () => {
+    const { dependencies } = createPublishFixture();
+    const start = vi.fn();
+    const application = new NediaMatrixApplication({
+      ...dependencies,
+      automationDiagnostics: { start },
+    } as never);
+
+    await expect(
+      application.publications.prepare({
+        accountId: "account-1",
+        contentForm: "imageText",
+        mediaSelectionId: "selection-1",
+        title: "标题",
+        body: "正文",
+        requestId: " ",
+      }),
+    ).rejects.toThrow("Invalid publish draft request");
+    expect(start).not.toHaveBeenCalled();
   });
 
   it("uses one trace with separate prepare and submit executions", async () => {
@@ -517,11 +764,18 @@ describe("NediaMatrixApplication", () => {
     });
 
     expect(start).toHaveBeenCalledWith({
-      operation: "publish",
+      operation: "publication.prepare",
       requestId: "request-trace",
       accountId: "account-1",
       platformId: "douyin",
     });
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "account.verify",
+        accountId: "account-1",
+        platformId: "douyin",
+      }),
+    );
     expect(bind).toHaveBeenCalledWith({ publicationId: "publication-1" });
     expect(bind).toHaveBeenCalledWith({ pageId: "session-1" });
     expect(execution.mock.calls.map(([phase]) => phase)).toEqual([
@@ -628,7 +882,7 @@ describe("NediaMatrixApplication", () => {
   });
 
   it.each(["manual_confirmation", "automatic"] as const)(
-    "preserves a publication observed during preparation in %s mode",
+    "does not observe upload requests during preparation in %s mode",
     async (submissionMode) => {
       const { actions, dependencies } = createPublishFixture({
         publishDuringPreparation: true,
@@ -644,17 +898,42 @@ describe("NediaMatrixApplication", () => {
         submissionMode,
       });
 
-      expect(result).toMatchObject({
-        status: "already_started",
-        publicationId: "publication-1",
-        state: "published",
-      });
-      expect(actions).toContain("observed:published");
-      expect(actions).not.toContain("mark:awaiting_confirmation");
-      expect(actions).not.toContain("mark:submitting");
-      expect(actions).not.toContain("workflow:publish.submit");
+      expect(result.status).toBe(
+        submissionMode === "manual_confirmation"
+          ? "ready_for_review"
+          : "submission_started",
+      );
+      expect(actions).not.toContain("observed:published");
+      expect(actions.indexOf("arm")).toBeGreaterThan(
+        actions.indexOf("workflow:publish.prepare.imageText"),
+      );
     },
   );
+
+  it("hands off a manual page when observation reaches verifying during preparation", async () => {
+    const { actions, dependencies } = createPublishFixture({
+      verifyDuringPreparation: true,
+    });
+    const application = new NediaMatrixApplication(dependencies as never);
+
+    const result = await application.publications.prepare({
+      accountId: "account-1",
+      contentForm: "imageText",
+      mediaSelectionId: "selection-1",
+      title: "标题",
+      body: "正文",
+      submissionMode: "manual_confirmation",
+    });
+
+    expect(result).toMatchObject({
+      status: "already_started",
+      state: "verifying",
+    });
+    expect(actions.indexOf("handoff")).toBeGreaterThan(
+      actions.indexOf("workflow:publish.prepare.imageText"),
+    );
+    expect(actions).not.toContain("mark:awaiting_confirmation");
+  });
 
   it("keeps manual confirmation before the submit workflow", async () => {
     const { actions, dependencies } = createPublishFixture();
@@ -673,13 +952,71 @@ describe("NediaMatrixApplication", () => {
     expect(actions).toEqual([
       "start",
       "ready",
-      "arm",
       "workflow:publish.prepare.imageText",
       "consume",
       "handoff",
       "mark:awaiting_confirmation",
+      "arm",
       "focus",
     ]);
+  });
+
+  it("hands a partially filled page to the user and explains that tracking stopped", async () => {
+    const { actions, dependencies } = createPublishFixture({
+      failPreparation: true,
+    });
+    const show = vi.fn();
+    const application = new NediaMatrixApplication({
+      ...dependencies,
+      notices: { show },
+    } as never);
+
+    const result = await application.publications.prepare({
+      accountId: "account-1",
+      contentForm: "imageText",
+      mediaSelectionId: "selection-1",
+      title: "标题",
+      body: "正文",
+      submissionMode: "manual_confirmation",
+    });
+
+    expect(result.status).toBe("failed");
+    expect(actions).toContain("handoff");
+    expect(actions).not.toContain("arm");
+    expect(show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "publish.preparation_failed",
+        pageAvailable: true,
+        message: "editor fill failed",
+      }),
+    );
+  });
+
+  it("shows a failure notice after a human submission result", async () => {
+    const { dependencies, finishObservation } = createPublishFixture();
+    const show = vi.fn();
+    const application = new NediaMatrixApplication({
+      ...dependencies,
+      notices: { show },
+    } as never);
+
+    await application.publications.prepare({
+      accountId: "account-1",
+      contentForm: "imageText",
+      mediaSelectionId: "selection-1",
+      title: "标题",
+      body: "正文",
+      submissionMode: "manual_confirmation",
+    });
+    await finishObservation({ kind: "failed", message: "平台返回 461" });
+
+    expect(show).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: "publish.failed",
+        pageAvailable: true,
+        message: "平台返回 461",
+      }),
+    );
   });
 
   it("composes Kuaishou title, body, and tags into a manual-review description", async () => {
@@ -724,9 +1061,9 @@ describe("NediaMatrixApplication", () => {
     expect(actions).toEqual([
       "start",
       "ready",
-      "arm",
       "workflow:publish.prepare.video",
       "consume",
+      "arm",
       "mark:submitting",
       "attempt",
       "workflow:publish.submit",
@@ -804,9 +1141,9 @@ describe("NediaMatrixApplication", () => {
     expect(actions).toEqual([
       "start",
       "ready",
-      "arm",
       "workflow:publish.prepare.imageText",
       "consume",
+      "arm",
       "mark:submitting",
       "attempt",
       "workflow:publish.submit",
@@ -834,6 +1171,25 @@ describe("NediaMatrixApplication", () => {
     expect(prepareWorkflowInputs()?.tags).toEqual(["旅行", "周末去哪儿"]);
     expect(prepareWorkflowInputs()?.mediaPaths).toEqual(["/tmp/image.jpg"]);
     expect(prepareWorkflowInputs()).not.toHaveProperty("mediaReferences");
+  });
+
+  it("formats inline topics before persisting and filling the body", async () => {
+    const { dependencies, preparationInput, prepareWorkflowInputs } =
+      createPublishFixture();
+    const application = new NediaMatrixApplication(dependencies as never);
+
+    await application.publications.prepare({
+      accountId: "account-1",
+      contentForm: "imageText",
+      mediaSelectionId: "selection-1",
+      title: "标题",
+      body: "这样吗#与异性的分寸感 #朋友的重要性",
+      submissionMode: "automatic",
+    });
+
+    const formatted = "这样吗 #与异性的分寸感 #朋友的重要性";
+    expect(preparationInput()?.body).toBe(formatted);
+    expect(prepareWorkflowInputs()?.body).toBe(formatted);
   });
 
   it("rejects a second publication while the same account is active", async () => {
@@ -1049,9 +1405,9 @@ describe("NediaMatrixApplication", () => {
       "create-selection",
       "start",
       "ready",
-      "arm",
       "workflow:publish.prepare.imageText",
       "consume",
+      "handoff",
     ]);
     expect(actions).not.toContain("discard");
     expect(preparationInput()?.assets).toEqual([
@@ -1126,5 +1482,114 @@ describe("NediaMatrixApplication", () => {
       publicationId: "publication-1",
     });
     expect(actions).toEqual([]);
+  });
+});
+
+describe("publication risk confirmation", () => {
+  const localRequest = {
+    accountId: "account-1",
+    requestId: "request-1",
+    contentForm: "imageText" as const,
+    mediaSelectionId: "selection-1",
+    title: "标题",
+    body: "正文",
+    submissionMode: "manual_confirmation" as const,
+  };
+  const remoteRequest = {
+    accountId: "account-1",
+    requestId: "request-1",
+    contentForm: "imageText" as const,
+    title: "标题",
+    body: "正文",
+    assets: [
+      {
+        url: "https://assets.example.test/image.png",
+        name: "image.png",
+        mediaType: "image/png" as const,
+        role: "image" as const,
+        order: 0,
+      },
+    ],
+  };
+
+  it.each(["local", "remote"] as const)(
+    "cancels %s Xiaohongshu publishing before creating a task or processing media",
+    async (source) => {
+      const { dependencies, actions } = createPublishFixture({
+        platformId: "xiaohongshu",
+      });
+      const confirmPublicationRisk = vi.fn(async () => false);
+      const application = new NediaMatrixApplication({
+        ...dependencies,
+        confirmPublicationRisk,
+      } as never);
+      const result =
+        source === "local"
+          ? await application.publications.prepare(localRequest)
+          : await application.publications.prepareRemote(remoteRequest);
+      expect(result).toEqual({ status: "cancelled", message: "已取消发布" });
+      expect(confirmPublicationRisk).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ platformId: "xiaohongshu" }),
+      );
+      expect(actions).toEqual([]);
+      expect(application.publications.list()).toEqual([]);
+    },
+  );
+
+  it("does not start Xiaohongshu publishing when the confirmation port is unavailable", async () => {
+    const { dependencies, actions } = createPublishFixture({
+      platformId: "xiaohongshu",
+    });
+    const application = new NediaMatrixApplication(dependencies as never);
+    expect((await application.publications.prepare(localRequest)).status).toBe(
+      "cancelled",
+    );
+    expect(actions).toEqual([]);
+  });
+
+  it("does not prompt again when recovering an existing Xiaohongshu task", async () => {
+    const { dependencies } = createPublishFixture({
+      platformId: "xiaohongshu",
+      existingPublication: true,
+    });
+    const confirmPublicationRisk = vi.fn(async () => false);
+    const application = new NediaMatrixApplication({
+      ...dependencies,
+      confirmPublicationRisk,
+    } as never);
+    expect(
+      (await application.publications.prepareRemote(remoteRequest)).status,
+    ).toBe("already_started");
+    expect(confirmPublicationRisk).not.toHaveBeenCalled();
+  });
+
+  it("continues remote preparation after a single risk confirmation", async () => {
+    const { dependencies, actions } = createPublishFixture({
+      platformId: "xiaohongshu",
+    });
+    const confirmPublicationRisk = vi.fn(async () => true);
+    const application = new NediaMatrixApplication({
+      ...dependencies,
+      confirmPublicationRisk,
+    } as never);
+    expect(
+      (await application.publications.prepareRemote(remoteRequest)).status,
+    ).toBe("ready_for_review");
+    expect(confirmPublicationRisk).toHaveBeenCalledTimes(1);
+    expect(actions).toContain("download");
+    expect(actions).toContain("start");
+  });
+
+  it("does not prompt for other platforms", async () => {
+    const { dependencies } = createPublishFixture();
+    const confirmPublicationRisk = vi.fn(async () => false);
+    const application = new NediaMatrixApplication({
+      ...dependencies,
+      confirmPublicationRisk,
+    } as never);
+    expect((await application.publications.prepare(localRequest)).status).toBe(
+      "ready_for_review",
+    );
+    expect(confirmPublicationRisk).not.toHaveBeenCalled();
   });
 });

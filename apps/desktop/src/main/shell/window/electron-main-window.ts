@@ -10,6 +10,11 @@ const currentDirectory = dirname(fileURLToPath(import.meta.url));
 export class ElectronMainWindow {
   private window: BrowserWindow | undefined;
 
+  constructor(
+    private readonly onLoadFailure?: (error: unknown) => void,
+    private readonly onLoadSuccess?: () => void,
+  ) {}
+
   open(): void {
     if (this.window && !this.window.isDestroyed()) {
       this.window.show();
@@ -42,7 +47,15 @@ export class ElectronMainWindow {
       ? window.loadURL(rendererUrl)
       : window.loadFile(join(currentDirectory, "../renderer/index.html"));
     void loading
+      .then(() => {
+        if (!window.isDestroyed()) this.onLoadSuccess?.();
+      })
       .catch((error: unknown) => {
+        try {
+          this.onLoadFailure?.(error);
+        } catch {
+          // Diagnostics must not interfere with window recovery.
+        }
         console.error("Failed to load the desktop renderer", error);
       })
       .finally(() => {

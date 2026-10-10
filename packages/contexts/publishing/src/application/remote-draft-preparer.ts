@@ -1,5 +1,8 @@
 import type { PreparePublishDraftRequest } from "./index.js";
-import type { PublicationApplicationDependencies } from "./ports.js";
+import type {
+  PublicationAccountView,
+  PublicationApplicationDependencies,
+} from "./ports.js";
 import {
   type PrepareRemoteDraftRequest,
   validateRemoteAssetsForForm,
@@ -15,6 +18,7 @@ export async function prepareRemoteDraft<Result>(
   request: PrepareRemoteDraftRequest,
   dependencies: RemoteDraftDependencies,
   prepareDraft: (request: PreparePublishDraftRequest) => Promise<Result>,
+  confirmRisk: (account: PublicationAccountView) => Promise<boolean>,
 ) {
   const requestId = validateRemoteDraftRequest(request);
   const existing = dependencies.publishing
@@ -51,6 +55,10 @@ export async function prepareRemoteDraft<Result>(
     request.contentForm,
     request.assets,
   );
+
+  if (!(await confirmRisk(account))) {
+    return { status: "cancelled", message: "已取消发布" } as const;
+  }
 
   const downloaded = await dependencies.remoteAssets.download(
     requestId,

@@ -9,3 +9,6 @@ coverage/
 .env
 !.env.example
 /output/playwright/
+/.local/
+
+/apps/desktop/resources/update-helper/
