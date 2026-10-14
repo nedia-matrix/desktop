@@ -17,13 +17,21 @@ import {
 } from "../shared.js";
 import { PlatformContentsPage } from "./platform-contents-page.js";
 
+import {
+  AccountBrowserStatus,
+  browserRuntimeLabel,
+  type BrowserRuntimeStatus,
+} from "../components/account-browser-status.js";
+
 export function AccountsPage({
   context,
   account,
+  browserStatus = "unknown",
   onAccountsChanged,
 }: {
   context: AppContext;
   account?: PlatformAccountView;
+  browserStatus?: BrowserRuntimeStatus;
   onAccountsChanged(
     accounts: readonly PlatformAccountView[],
     preferredAccountId?: string,
@@ -138,9 +146,10 @@ export function AccountsPage({
             class="secondary-button compact-button"
             type="button"
             disabled={busyAction !== undefined}
+            title={browserRuntimeLabel(browserStatus)}
             onClick={() => void runAction("open")}
           >
-            <Icon name="arrow-up-right" size={16} />
+            <AccountBrowserStatus status={browserStatus} compact />
             打开平台
           </button>
           <button

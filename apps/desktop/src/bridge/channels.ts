@@ -1,4 +1,6 @@
 export const ipcChannels = {
+  listAccountBrowserRuntimes: "matrix:account-browser:runtimes",
+  accountBrowserRuntimesChanged: "matrix:account-browser:runtimes-changed",
   getPreferences: "matrix:preferences:get",
   updatePreferences: "matrix:preferences:update",
   listPlatforms: "matrix:platforms:list",
@@ -16,6 +18,7 @@ export const ipcChannels = {
   selectPublishMedia: "matrix:publish:select-media",
   preparePublishDraft: "matrix:publish:prepare-draft",
   queryPublications: "matrix:publications:query",
+  openPublicationAsset: "matrix:publications:open-asset",
   getPublicationTask: "matrix:publications:get-task",
   getPublicationPlatformContent: "matrix:publications:platform-content",
   recreatePublicationDraft: "matrix:publications:recreate-draft",

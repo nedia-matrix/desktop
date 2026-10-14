@@ -4,6 +4,7 @@ node_modules/
 .turbo/
 dist/
 out/
+reports/
 coverage/
 *.log
 .env

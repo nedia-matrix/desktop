@@ -31,6 +31,7 @@ function fixture() {
   }> = [];
   const pages: any[] = [];
   const onClosed = vi.fn();
+  const onRuntimesChanged = vi.fn();
   const openContext = vi.fn(async (options: { headless?: boolean }) => {
     const context = Object.assign(new EventEmitter(), { pages: () => [] });
     const browser = {
@@ -93,8 +94,13 @@ function fixture() {
     profilesRoot: () => "/profiles",
     evidenceRoot: () => "/evidence",
   };
-  const host = new PlaywrightBrowserSessionHost(onClosed, deps as never);
-  return { host, pages, browsers, deps, onClosed };
+  const host = new PlaywrightBrowserSessionHost(
+    onClosed,
+    deps as never,
+    undefined,
+    onRuntimesChanged,
+  );
+  return { host, pages, browsers, deps, onClosed, onRuntimesChanged };
 }
 
 describe("isolated account browser sessions", () => {
@@ -450,5 +456,83 @@ describe("isolated account browser sessions", () => {
       "shutting down",
     );
     expect(f.deps.openContext).not.toHaveBeenCalled();
+  });
+});
+
+describe("account browser runtime notifications", () => {
+  it("reports window launch, context reuse and manual close independently of login", async () => {
+    const f = fixture();
+    expect(f.host.listAccountBrowserRuntimes()).toEqual([]);
+    await f.host.openUserPage(account, platform);
+    const running = [{ accountId: account.id, mode: "window" }];
+    expect(f.host.listAccountBrowserRuntimes()).toEqual(running);
+    expect(f.onRuntimesChanged).toHaveBeenLastCalledWith(running);
+    await f.host.openUserPage(account, platform);
+    expect(f.onRuntimesChanged).toHaveBeenCalledOnce();
+    f.browsers[0]!.context.emit("close");
+    expect(f.host.listAccountBrowserRuntimes()).toEqual([]);
+    expect(f.onRuntimesChanged).toHaveBeenLastCalledWith([]);
+  });
+
+  it("keeps background running until the last parallel sync releases its context", async () => {
+    const f = fixture();
+    const a = await f.host.openForVerification(account, platform);
+    const b = await f.host.openForVerification(account, platform);
+    expect(f.onRuntimesChanged).toHaveBeenLastCalledWith([
+      { accountId: account.id, mode: "background" },
+    ]);
+    await a.close();
+    expect(f.host.listAccountBrowserRuntimes()).toEqual([
+      { accountId: account.id, mode: "background" },
+    ]);
+    await b.close();
+    expect(f.onRuntimesChanged).toHaveBeenLastCalledWith([]);
+    expect(f.onClosed).not.toHaveBeenCalled();
+  });
+
+  it("reports independent accounts and updates background to window when opened", async () => {
+    const f = fixture();
+    const second = { ...account, id: "account-2", profileId: "profile-2" };
+    await f.host.openUserPage(second, platform);
+    const sync = await f.host.openForVerification(account, platform);
+    const opening = f.host.openUserPage(account, platform);
+    await sync.close();
+    await opening;
+    expect(f.host.listAccountBrowserRuntimes()).toEqual([
+      { accountId: second.id, mode: "window" },
+      { accountId: account.id, mode: "window" },
+    ]);
+    await f.host.closeAutomation(account);
+    expect(f.onRuntimesChanged).toHaveBeenLastCalledWith([
+      { accountId: second.id, mode: "window" },
+    ]);
+    await f.host.closeAll();
+    expect(f.onRuntimesChanged).toHaveBeenLastCalledWith([]);
+  });
+
+  it("merges switch candidate profiles and keeps the remaining context running", async () => {
+    const f = fixture();
+    const sync = await f.host.openForVerification(account, platform);
+    const candidate = { ...account, profileId: "candidate-profile" };
+    await f.host.openUserPage(candidate, platform);
+    expect(f.host.listAccountBrowserRuntimes()).toEqual([
+      { accountId: account.id, mode: "window" },
+    ]);
+    f.browsers[1]!.context.emit("close");
+    expect(f.onRuntimesChanged).toHaveBeenLastCalledWith([
+      { accountId: account.id, mode: "background" },
+    ]);
+    await sync.close();
+    expect(f.host.listAccountBrowserRuntimes()).toEqual([]);
+  });
+
+  it("does not report a browser as running after launch fails", async () => {
+    const f = fixture();
+    f.deps.openContext.mockRejectedValueOnce(new Error("launch failed"));
+    await expect(f.host.openUserPage(account, platform)).rejects.toThrow(
+      "launch failed",
+    );
+    expect(f.host.listAccountBrowserRuntimes()).toEqual([]);
+    expect(f.onRuntimesChanged).not.toHaveBeenCalled();
   });
 });

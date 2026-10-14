@@ -12,6 +12,9 @@ import { SettingsPage } from "./pages/settings-page.js";
 import { accountStatus, platformFor } from "./shared.js";
 import { applyTheme, resolveTheme, type ThemePreference } from "./theme.js";
 
+import type { AccountBrowserRuntime } from "../../bridge/account-browser-runtime.js";
+import { AccountBrowserStatus } from "./components/account-browser-status.js";
+
 interface RouteDefinition {
   path: string;
   title: string;
@@ -57,6 +60,35 @@ export function App({
     context.accounts,
   );
   const [accountsLoaded, setAccountsLoaded] = useState(false);
+  const [browserRuntimes, setBrowserRuntimes] = useState<
+    AccountBrowserRuntime[] | null
+  >(null);
+  const browserStatus = (accountId: string) =>
+    browserRuntimes === null
+      ? ("unknown" as const)
+      : (browserRuntimes.find((runtime) => runtime.accountId === accountId)
+          ?.mode ?? ("stopped" as const));
+
+  useEffect(() => {
+    let active = true;
+    let receivedEvent = false;
+    const stop = window.matrix.onAccountBrowserRuntimesChanged((runtimes) => {
+      receivedEvent = true;
+      if (active) setBrowserRuntimes(runtimes);
+    });
+    void window.matrix
+      .listAccountBrowserRuntimes()
+      .then((runtimes) => {
+        if (active && !receivedEvent) setBrowserRuntimes(runtimes);
+      })
+      .catch(() => {
+        /* Keep unknown until the next lifecycle notification. */
+      });
+    return () => {
+      active = false;
+      stop();
+    };
+  }, []);
   const [selectedAccountId, setSelectedAccountId] = useState(
     () => globalThis.localStorage.getItem(selectedAccountStorageKey) ?? "",
   );
@@ -273,10 +305,17 @@ export function App({
                     globalThis.location.hash = "/accounts";
                   }}
                 >
-                  <PlatformIcon
-                    platformId={account.platformId}
-                    platformName={platform?.displayName ?? account.platformId}
-                  />
+                  <span class="sidebar-account-avatar">
+                    <PlatformIcon
+                      platformId={account.platformId}
+                      platformName={platform?.displayName ?? account.platformId}
+                    />
+                    <AccountBrowserStatus
+                      status={browserStatus(account.id)}
+                      runningOnly
+                      compact
+                    />
+                  </span>
                   <span class="sidebar-account-copy">
                     <strong>{accountName}</strong>
                     <small>
@@ -343,6 +382,9 @@ export function App({
             <AccountsPage
               context={context}
               account={selectedAccount}
+              browserStatus={
+                selectedAccount ? browserStatus(selectedAccount.id) : "unknown"
+              }
               onAccountsChanged={updateAccounts}
             />
           ) : route.path === "/publish" ? (

@@ -25,7 +25,23 @@ import type {
 } from "@nedia-matrix/publishing";
 import { contextBridge, ipcRenderer } from "electron";
 
+import type { AccountBrowserRuntime } from "../bridge/account-browser-runtime.js";
+
 const api: MatrixDesktopApi = {
+  listAccountBrowserRuntimes: () =>
+    ipcRenderer.invoke(ipcChannels.listAccountBrowserRuntimes),
+  onAccountBrowserRuntimesChanged: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      runtimes: AccountBrowserRuntime[],
+    ) => listener(runtimes);
+    ipcRenderer.on(ipcChannels.accountBrowserRuntimesChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(
+        ipcChannels.accountBrowserRuntimesChanged,
+        handler,
+      );
+  },
   getPreferences: (request) =>
     ipcRenderer.invoke(ipcChannels.getPreferences, request),
   updatePreferences: (request) =>
@@ -87,6 +103,8 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.preparePublishDraft, request),
   queryPublications: (request: PublicationQuery) =>
     ipcRenderer.invoke(ipcChannels.queryPublications, request),
+  openPublicationAsset: (request) =>
+    ipcRenderer.invoke(ipcChannels.openPublicationAsset, request),
   getPublicationTask: (request: OpenPublicationRequest) =>
     ipcRenderer.invoke(ipcChannels.getPublicationTask, request),
   getPublicationPlatformContent: (request: OpenPublicationRequest) =>

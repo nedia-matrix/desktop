@@ -27,8 +27,6 @@ export interface StoredBrowserRuntime {
   locale: string;
   timezoneId: string;
   channel?: string;
-  width: number;
-  height: number;
 }
 const metadataName = "nedia-browser-runtime.json";
 
@@ -54,12 +52,6 @@ function validateRuntime(value: unknown): StoredBrowserRuntime {
     r.fingerprintSeed > 2147483647 ||
     typeof r.locale !== "string" ||
     typeof r.timezoneId !== "string" ||
-    !Number.isInteger(r.width) ||
-    !Number.isInteger(r.height) ||
-    r.width < 640 ||
-    r.height < 480 ||
-    r.width > 7680 ||
-    r.height > 4320 ||
     (r.channel !== undefined && typeof r.channel !== "string") ||
     (r.provider === "fingerprint" &&
       (typeof r.executablePath !== "string" || !isAbsolute(r.executablePath)))
@@ -68,17 +60,26 @@ function validateRuntime(value: unknown): StoredBrowserRuntime {
       "Invalid browser runtime metadata; refusing to regenerate account identity",
     );
   new Intl.DateTimeFormat(r.locale, { timeZone: r.timezoneId });
-  return r;
+  // Older metadata includes dimensions that are no longer part of the runtime.
+  const {
+    width: _width,
+    height: _height,
+    ...runtime
+  } = r as StoredBrowserRuntime & {
+    width?: unknown;
+    height?: unknown;
+  };
+  return runtime;
 }
 
 export async function saveBrowserRuntime(
   directory: string,
   runtime: StoredBrowserRuntime,
 ): Promise<void> {
-  validateRuntime(runtime);
+  const normalized = validateRuntime(runtime);
   const temporary = join(directory, `.${metadataName}.${randomUUID()}`);
   try {
-    await writeFile(temporary, JSON.stringify(runtime, null, 2) + "\n", {
+    await writeFile(temporary, JSON.stringify(normalized, null, 2) + "\n", {
       mode: 0o600,
       flag: "wx",
     });
@@ -152,8 +153,6 @@ async function readBrowserRuntime(
       requested?.timezoneId ??
       stored?.timezoneId ??
       Intl.DateTimeFormat().resolvedOptions().timeZone,
-    width: stored?.width ?? 1366,
-    height: stored?.height ?? 768,
   });
   if (runtime.provider === "fingerprint") {
     await verifyFingerprintBrowser(runtime.executablePath!);

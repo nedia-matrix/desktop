@@ -48,7 +48,13 @@ import type {
   ReadDiagnosticAttachmentRequest,
 } from "./contracts.js";
 
+import type { AccountBrowserRuntime } from "./account-browser-runtime.js";
+
 export interface MatrixDesktopApi {
+  listAccountBrowserRuntimes(): Promise<AccountBrowserRuntime[]>;
+  onAccountBrowserRuntimesChanged(
+    listener: (runtimes: AccountBrowserRuntime[]) => void,
+  ): () => void;
   getPreferences(request?: GetPreferencesRequest): Promise<DesktopPreferences>;
   updatePreferences(
     request: UpdatePreferencesRequest,
@@ -102,6 +108,10 @@ export interface MatrixDesktopApi {
     request: PreparePublishDraftRequest,
   ): Promise<PreparePublishDraftResult>;
   queryPublications(request: PublicationQuery): Promise<PublicationQueryResult>;
+  openPublicationAsset(request: {
+    publicationId: string;
+    assetIndex: number;
+  }): Promise<void>;
   getPublicationTask(
     request: OpenPublicationRequest,
   ): Promise<PublicationTaskSummary | null>;

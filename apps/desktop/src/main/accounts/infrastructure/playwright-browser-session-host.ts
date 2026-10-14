@@ -1,3 +1,4 @@
+import type { AccountBrowserRuntime } from "../../../bridge/account-browser-runtime.js";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -65,7 +66,25 @@ export class PlaywrightBrowserSessionHost {
     private readonly dependencies: Dependencies = defaults,
     private readonly onUnsupportedPopup: (publicationId: string) => void = () =>
       undefined,
+    private readonly onRuntimesChanged: (
+      runtimes: AccountBrowserRuntime[],
+    ) => void = () => undefined,
   ) {}
+
+  listAccountBrowserRuntimes(): AccountBrowserRuntime[] {
+    const modes = new Map<string, AccountBrowserRuntime["mode"]>();
+    for (const entry of this.profiles.values()) {
+      const mode = entry.browser.headless ? "background" : "window";
+      if (modes.get(entry.accountId) !== "window")
+        modes.set(entry.accountId, mode);
+    }
+    return [...modes].map(([accountId, mode]) => ({ accountId, mode }));
+  }
+
+  private forgetProfile(profileId: string): void {
+    if (this.profiles.delete(profileId))
+      this.onRuntimesChanged(this.listAccountBrowserRuntimes());
+  }
 
   get size() {
     return this.profiles.size;
@@ -102,7 +121,7 @@ export class PlaywrightBrowserSessionHost {
       await entry.idle;
       await entry.browser.close();
       if (this.profiles.get(account.profileId) === entry)
-        this.profiles.delete(account.profileId);
+        this.forgetProfile(account.profileId);
       entry = undefined;
     }
     if (entry) return entry;
@@ -128,10 +147,11 @@ export class PlaywrightBrowserSessionHost {
     this.profiles.set(account.profileId, opened);
     browser.context.once("close", () => {
       if (this.profiles.get(account.profileId) !== opened) return;
-      this.profiles.delete(account.profileId);
+      this.forgetProfile(account.profileId);
       // Closing a sync-only browser must not discard a pending publish media selection.
       if (!browser.headless) this.onSessionClosed(account.id);
     });
+    this.onRuntimesChanged(this.listAccountBrowserRuntimes());
     for (const existingPage of browser.context.pages()) {
       if (existingPage.url() === "about:blank") continue;
       const managed = await this.dependencies.createPage(
@@ -652,7 +672,7 @@ export class PlaywrightBrowserSessionHost {
           if (entry.browser.headless && entry.syncing === 0) {
             await entry.browser.close();
             if (this.profiles.get(account.profileId) === entry)
-              this.profiles.delete(account.profileId);
+              this.forgetProfile(account.profileId);
           }
           throw error;
         }
@@ -686,7 +706,7 @@ export class PlaywrightBrowserSessionHost {
           ) {
             await entry.browser.close();
             if (this.profiles.get(account.profileId) === entry)
-              this.profiles.delete(account.profileId);
+              this.forgetProfile(account.profileId);
           }
         });
       })().catch((error: unknown) => {
@@ -771,7 +791,7 @@ export class PlaywrightBrowserSessionHost {
         throw new Error("账号仍有活动任务，暂不能关闭环境");
       await entry.browser.close();
       if (this.profiles.get(account.profileId) === entry)
-        this.profiles.delete(account.profileId);
+        this.forgetProfile(account.profileId);
     });
   }
   async remove(account: PlatformAccountSnapshot) {
@@ -783,7 +803,7 @@ export class PlaywrightBrowserSessionHost {
       if (entry && (entry.syncing || this.hasPublication(entry)))
         throw new Error("账号仍有活动任务，暂不能删除环境");
       if (entry) await entry.browser.close();
-      this.profiles.delete(profileId);
+      this.forgetProfile(profileId);
       await this.dependencies.removeProfileDirectory(
         browserProfileDirectory(this.dependencies.profilesRoot(), profileId),
         { recursive: true, force: true },

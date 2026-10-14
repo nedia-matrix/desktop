@@ -175,3 +175,40 @@ button.account-recent-card[aria-disabled="true"] {
 .dialog-platform-grid {
   padding: 16px;
 }
+
+.account-browser-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: inherit;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+.account-browser-status.running {
+  color: var(--accent);
+}
+
+.sidebar-account-avatar {
+  position: relative;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+.sidebar-account-avatar .account-browser-status {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  padding: 1px;
+  border-radius: 50%;
+  background: var(--sidebar-bg);
+}
+.account-navigation
+  > button.active
+  .sidebar-account-avatar
+  .account-browser-status {
+  background: var(--surface);
+}
+.account-navigation .sidebar-account-copy small {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

@@ -30,6 +30,34 @@ describe("persistent browser identity", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it("ignores legacy dimensions and removes them on save without changing identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nedia-runtime-legacy-"));
+    try {
+      const original = await loadBrowserRuntime(root);
+      expect(original).not.toHaveProperty("width");
+      expect(original).not.toHaveProperty("height");
+      const legacy = {
+        ...original,
+        channel: "Microsoft Edge",
+        width: 1366,
+        height: 768,
+      };
+      await writeFile(
+        join(root, "nedia-browser-runtime.json"),
+        JSON.stringify(legacy),
+      );
+      const reopened = await loadBrowserRuntime(root);
+      expect(reopened).toEqual({ ...original, channel: "Microsoft Edge" });
+      await saveBrowserRuntime(root, legacy);
+      expect(
+        JSON.parse(
+          await readFile(join(root, "nedia-browser-runtime.json"), "utf8"),
+        ),
+      ).toEqual(reopened);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("rejects corrupt seed metadata rather than changing identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "nedia-runtime-invalid-"));
     try {

@@ -3,6 +3,8 @@ import { ipcMain } from "electron";
 
 import type { NediaMatrixUseCases } from "../../application/nedia-matrix-application.js";
 
+import type { AccountBrowserRuntime } from "../../../bridge/account-browser-runtime.js";
+
 type AccountIpcApplication = Pick<
   NediaMatrixUseCases,
   "accounts" | "platformSummaries"
@@ -10,7 +12,11 @@ type AccountIpcApplication = Pick<
 
 export function registerAccountIpcHandlers(
   application: AccountIpcApplication,
+  browserRuntimes: { listAccountBrowserRuntimes(): AccountBrowserRuntime[] },
 ): void {
+  ipcMain.handle(ipcChannels.listAccountBrowserRuntimes, () =>
+    browserRuntimes.listAccountBrowserRuntimes(),
+  );
   ipcMain.handle(ipcChannels.listPlatforms, () =>
     application.platformSummaries(),
   );

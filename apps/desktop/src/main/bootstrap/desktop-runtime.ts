@@ -34,6 +34,8 @@ import { runtimeSupportedTargets } from "../runtime-api/mapping/runtime-supporte
 import { ContentAddressedPublicationAssetStore } from "../publishing/infrastructure/content-addressed-asset-store.js";
 import { MediaSelectionStore } from "../publishing/infrastructure/media-selection-store.js";
 import { RemoteAssetDownloader } from "../publishing/infrastructure/remote-asset-downloader.js";
+import { LocalAssetArchiver } from "../publishing/infrastructure/local-asset-archiver.js";
+import { registerPublicationAssetIpc } from "../publishing/ipc/register-publication-asset-ipc.js";
 import { registerPublicationIpcHandlers } from "../publishing/ipc/register-publication-ipc-handlers.js";
 import { registerPlatformContentIpcHandlers } from "../platform-content/ipc/register-platform-content-ipc-handlers.js";
 import { PublicationObservationQueue } from "../publishing/observations/publication-observation-queue.js";
@@ -358,6 +360,7 @@ export class DesktopRuntime {
             "请在原发布页完成提交。新标签页中的提交不属于当前任务的结果观察范围；如已在新标签页提交，请先核实平台结果，不要重复发布。",
         });
       },
+      (runtimes) => this.mainWindow.sendAccountBrowserRuntimesChanged(runtimes),
     );
   }
 
@@ -734,9 +737,20 @@ export class DesktopRuntime {
     void this.application.accounts.cleanupRetiredProfiles().catch(() => {
       console.error("Failed to clean up retired browser profiles");
     });
-    registerAccountIpcHandlers(this.application);
+    registerAccountIpcHandlers(this.application, this.browserSessions);
     registerPlatformContentIpcHandlers(this.application);
+    registerPublicationAssetIpc({
+      getAssets: (publicationId) =>
+        this.metadata.publications.get(publicationId)?.assets,
+      resolvePath: (relativePath) =>
+        publicationAssetStore.resolvePath(relativePath),
+    });
+    const localAssets = new LocalAssetArchiver(
+      publicationAssetStore,
+      path.join(app.getPath("userData"), "staging"),
+    );
     registerPublicationIpcHandlers({
+      archiveLocalMedia: (resources) => localAssets.archive(resources),
       ...dependencies,
       application: this.application,
     });

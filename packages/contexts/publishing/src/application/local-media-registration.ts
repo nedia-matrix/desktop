@@ -12,6 +12,9 @@ export interface LocalMediaResource {
   name: string;
   size: number;
   extension: string;
+  mediaType?: string;
+  hash?: string;
+  localRelativePath?: string;
 }
 
 export interface RegisterLocalMediaCommand {
@@ -88,7 +91,15 @@ export function registerLocalMedia(
     throw new TypeError("Invalid local media resource");
   }
 
-  const files = command.resources.map(({ name, size }) => ({ name, size }));
+  const files = command.resources.map(
+    ({ name, size, mediaType, hash, localRelativePath }) => ({
+      name,
+      size,
+      ...(mediaType ? { mediaType } : {}),
+      ...(hash ? { hash } : {}),
+      ...(localRelativePath ? { localRelativePath } : {}),
+    }),
+  );
   const selectionId = dependencies.mediaSelections.create({
     accountId: account.id,
     contentForm: command.contentForm,
