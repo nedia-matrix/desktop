@@ -1,9 +1,11 @@
+import type { AccountPlatformCatalog } from "@nedia-matrix/platform-sdk";
 import type {
   PlatformModule,
   PublishInterruptionReason,
   PublishObservationSession,
   PublishResultEvent,
   PublishResultMonitor,
+  PluginPublishSession,
 } from "@nedia-matrix/platform-sdk";
 
 import type {
@@ -20,7 +22,7 @@ import type {
   PublishContentForm,
 } from "../domain/index.js";
 
-export interface PlatformCatalog {
+export interface PlatformCatalog extends AccountPlatformCatalog {
   get(id: string): PlatformModule | undefined;
   require(id: string): PlatformModule;
   list(): readonly PlatformModule[];
@@ -29,6 +31,7 @@ export interface PlatformCatalog {
 export interface PublicationAccountView {
   readonly id: string;
   readonly platformId: string;
+  readonly settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
   readonly profileId: string;
   readonly lifecycle: "pending_identity" | "active";
   readonly displayName: string;
@@ -161,6 +164,17 @@ export interface ManagedPublishObservation {
 }
 
 export interface PublishObservationPort {
+  /** Direct API results share persistence/events, without a browser result monitor. */
+  attachDirect?(input: {
+    publicationId: string;
+    accountId: string;
+    platformId: string;
+    onInterrupt(): void;
+  }): {
+    readonly id: string;
+    persist(result: PublishResultEvent): Promise<void>;
+    close(): Promise<void>;
+  };
   attach(input: {
     publicationId: string;
     accountId: string;
@@ -204,6 +218,7 @@ export interface PublicationQueryPort {
 }
 
 export interface PublishWorkflowInputs {
+  settings?: import("@nedia-matrix/platform-sdk").PlatformSettings;
   mediaReferences?: readonly string[];
   title?: string;
   body?: string;
@@ -295,6 +310,16 @@ export interface PublicationNoticePort {
 }
 
 export interface PublicationApplicationDependencies {
+  pluginPublishing?: {
+    open(input: {
+      account: PublicationAccountView;
+      platform: PlatformModule;
+      publicationId: string;
+      pageId: string;
+      adapterId: string;
+      settings: import("@nedia-matrix/platform-sdk").PlatformSettings;
+    }): Promise<PluginPublishSession>;
+  };
   platforms: PlatformCatalog;
   accounts: PublicationAccountReader;
   browser: PublicationBrowserPort;
@@ -328,7 +353,6 @@ export interface PublicationApplicationDependencies {
   diagnostics: PublishDiagnosticSink;
   automationDiagnostics?: PublishAutomationDiagnosticPort;
   notices?: PublicationNoticePort;
-  confirmPublicationRisk?(account: PublicationAccountView): Promise<boolean>;
 }
 
 export interface StoredPublicationAsset {

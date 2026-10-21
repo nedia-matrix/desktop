@@ -307,7 +307,7 @@ export function App({
                 >
                   <span class="sidebar-account-avatar">
                     <PlatformIcon
-                      platformId={account.platformId}
+                      iconUrl={platform?.iconUrl}
                       platformName={platform?.displayName ?? account.platformId}
                     />
                     <AccountBrowserStatus

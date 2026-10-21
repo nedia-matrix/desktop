@@ -7,8 +7,8 @@ import {
   rename,
   writeFile,
 } from "node:fs/promises";
-import { constants } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { constants, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, rm } from "node:fs/promises";
 import { chromium } from "playwright";
@@ -72,6 +72,66 @@ function validateRuntime(value: unknown): StoredBrowserRuntime {
   return runtime;
 }
 
+/** Freeze a new profile's environment before its first browser launch.
+ * Only creates a fresh directory; never migrates or edits an existing profile.
+ * Native capability is still verified on every fingerprint launch.
+ */
+export function initializeBrowserRuntime(
+  directory: string,
+  requested: BrowserRuntimeConfiguration,
+): StoredBrowserRuntime {
+  const runtime = newBrowserRuntime(requested);
+  mkdirSync(dirname(directory), { recursive: true });
+  mkdirSync(directory);
+  try {
+    writeFileSync(
+      join(directory, metadataName),
+      JSON.stringify(runtime, null, 2) + "\n",
+      {
+        mode: 0o600,
+        flag: "wx",
+      },
+    );
+    return runtime;
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Reads pinned configuration without consulting process environment or writing metadata. */
+export async function readStoredBrowserRuntime(
+  directory: string,
+): Promise<StoredBrowserRuntime | undefined> {
+  try {
+    return validateRuntime(
+      JSON.parse(await readFile(join(directory, metadataName), "utf8")),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function newBrowserRuntime(
+  requested?: BrowserRuntimeConfiguration,
+  stored?: StoredBrowserRuntime,
+): StoredBrowserRuntime {
+  return validateRuntime({
+    version: 1,
+    provider: requested?.provider ?? "system",
+    ...(requested?.executablePath
+      ? { executablePath: requested.executablePath }
+      : {}),
+    fingerprintSeed: stored?.fingerprintSeed ?? randomInt(1, 2147483648),
+    locale: requested?.locale ?? stored?.locale ?? "zh-CN",
+    timezoneId:
+      requested?.timezoneId ??
+      stored?.timezoneId ??
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+  });
+}
+
 export async function saveBrowserRuntime(
   directory: string,
   runtime: StoredBrowserRuntime,
@@ -113,14 +173,7 @@ async function readBrowserRuntime(
   requested?: BrowserRuntimeConfiguration,
 ): Promise<StoredBrowserRuntime> {
   requested ??= browserRuntimeFromEnvironment();
-  let stored: StoredBrowserRuntime | undefined;
-  try {
-    stored = validateRuntime(
-      JSON.parse(await readFile(join(directory, metadataName), "utf8")),
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
+  const stored = await readStoredBrowserRuntime(directory);
   if (stored && !requested) return stored;
   if (stored && requested?.provider === stored.provider) {
     if (
@@ -141,19 +194,7 @@ async function readBrowserRuntime(
     throw new Error(
       "Fingerprint profiles cannot silently fall back to a system browser; restore the saved profile backup or use a new profile",
     );
-  const runtime = validateRuntime({
-    version: 1,
-    provider: requested?.provider ?? "system",
-    ...(requested?.executablePath
-      ? { executablePath: requested.executablePath }
-      : {}),
-    fingerprintSeed: stored?.fingerprintSeed ?? randomInt(1, 2147483648),
-    locale: requested?.locale ?? stored?.locale ?? "zh-CN",
-    timezoneId:
-      requested?.timezoneId ??
-      stored?.timezoneId ??
-      Intl.DateTimeFormat().resolvedOptions().timeZone,
-  });
+  const runtime = newBrowserRuntime(requested, stored);
   if (runtime.provider === "fingerprint") {
     await verifyFingerprintBrowser(runtime.executablePath!);
     // Browser vendors/versions must not mutate the only copy of an existing profile.
@@ -192,7 +233,9 @@ const verified = new Map<string, Promise<void>>();
 /** Two native probes reject stock Chrome even when it silently ignores fingerprint flags. */
 export async function verifyFingerprintBrowser(
   executablePath: string,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   if (!isAbsolute(executablePath))
     throw new TypeError("Fingerprint browser path must be absolute");
   await access(executablePath, constants.X_OK);
@@ -200,10 +243,12 @@ export async function verifyFingerprintBrowser(
     .update(await readFile(executablePath))
     .digest("hex");
   const key = `${executablePath}:${digest}`;
-  let probe = verified.get(key);
+  signal?.throwIfAborted();
+  let probe = signal ? undefined : verified.get(key);
   if (!probe) {
     probe = (async () => {
       for (const concurrency of [3, 7]) {
+        signal?.throwIfAborted();
         const directory = await mkdtemp(
           join(tmpdir(), "nedia-fingerprint-probe-"),
         );
@@ -218,7 +263,12 @@ export async function verifyFingerprintBrowser(
               `--fingerprint-hardware-concurrency=${concurrency}`,
             ],
           });
+          const abort = () => {
+            void context.close().catch(() => undefined);
+          };
+          signal?.addEventListener("abort", abort, { once: true });
           try {
+            signal?.throwIfAborted();
             const page = context.pages()[0] ?? (await context.newPage());
             const actual = await page.evaluate(
               () => navigator.hardwareConcurrency,
@@ -228,6 +278,7 @@ export async function verifyFingerprintBrowser(
                 "Browser does not implement the required native fingerprint flags",
               );
           } finally {
+            signal?.removeEventListener("abort", abort);
             await context.close();
           }
         } finally {
@@ -235,8 +286,10 @@ export async function verifyFingerprintBrowser(
         }
       }
     })();
-    verified.set(key, probe);
-    void probe.catch(() => verified.delete(key));
+    if (!signal) {
+      verified.set(key, probe);
+      void probe.catch(() => verified.delete(key));
+    }
   }
   return probe;
 }

@@ -1,3 +1,4 @@
+import { samePlatformId, isPlatformAvailable } from "../shared.js";
 import type {
   PublicationTaskSummary,
   PublicationStatus,
@@ -409,6 +410,10 @@ function PublicationRow({
   const platform = context.platforms.find(
     ({ id }) => id === publication.platformId,
   );
+  const platformAvailable = isPlatformAvailable(
+    context.platforms,
+    publication.platformId,
+  );
   const displayGroup = publication.effectiveDisplayGroup;
   const showWorkDetails = Boolean(
     publication.selectedPlatformContentId ||
@@ -470,7 +475,7 @@ function PublicationRow({
             items.filter(
               (item) =>
                 item.accountId === publication.accountId &&
-                item.platformId === publication.platformId,
+                samePlatformId(item.platformId, publication.platformId),
             ),
           );
       })
@@ -689,6 +694,7 @@ function PublicationRow({
     quick?: boolean;
     primary?: boolean;
     destructive?: boolean;
+    disabled?: boolean;
     run(): void | Promise<void>;
   }> = [
     {
@@ -705,6 +711,7 @@ function PublicationRow({
     },
     {
       label: "打开作品",
+      disabled: !platformAvailable,
       visible:
         displayGroup === "completed" &&
         Boolean(
@@ -738,6 +745,7 @@ function PublicationRow({
     },
     {
       label: "前往平台核实",
+      disabled: !platformAvailable,
       visible: unresolved && Boolean(account),
       primary: true,
       run: () => runAction("verify"),
@@ -776,6 +784,7 @@ function PublicationRow({
     },
     {
       label: "打开平台快照作品",
+      disabled: !platformAvailable,
       visible:
         displayGroup === "completed" &&
         Boolean(
@@ -788,6 +797,7 @@ function PublicationRow({
     },
     {
       label: "前往平台账号",
+      disabled: !platformAvailable,
       visible:
         displayGroup === "completed" &&
         Boolean(
@@ -864,7 +874,10 @@ function PublicationRow({
                 class="secondary-button small-button"
                 type="button"
                 key={action.label}
-                disabled={busy}
+                disabled={busy || action.disabled}
+                title={
+                  action.disabled ? "平台插件不可用，无法执行此操作" : undefined
+                }
                 onClick={() => void action.run()}
               >
                 {action.label}
@@ -924,7 +937,12 @@ function PublicationRow({
                   class={`${action.primary ? "" : "secondary-button "}small-button${action.destructive ? " publication-delete-action" : ""}`}
                   type="button"
                   key={action.label}
-                  disabled={busy}
+                  disabled={busy || action.disabled}
+                  title={
+                    action.disabled
+                      ? "平台插件不可用，无法执行此操作"
+                      : undefined
+                  }
                   onClick={() => void action.run()}
                 >
                   {action.label}
@@ -993,9 +1011,11 @@ function PublicationRow({
                             accountId: publication.accountId,
                           });
                         setWorkOptions(
-                          items.filter(
-                            (item) =>
-                              item.platformId === publication.platformId,
+                          items.filter((item) =>
+                            samePlatformId(
+                              item.platformId,
+                              publication.platformId,
+                            ),
                           ),
                         );
                       } catch (error) {
@@ -1049,6 +1069,12 @@ function PublicationRow({
                   </dd>
                 </div>
                 <div>
+                  <dt>执行插件</dt>
+                  <dd>
+                    {publication.pluginSource
+                      ? `${publication.pluginSource.pluginId} · ${publication.pluginSource.pluginVersion}`
+                      : "未知（历史记录）"}
+                  </dd>
                   <dt>规则版本</dt>
                   <dd>{publication.rulesVersion}</dd>
                 </div>

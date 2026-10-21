@@ -1,12 +1,22 @@
+import { resolvePlatformSettings } from "@nedia-matrix/platform-sdk";
+import { desktopPlugins } from "../plugins/desktop-plugins.js";
+import { createPlatformExecutionHost } from "../plugins/execution-host.js";
+import { createPluginPublisher } from "../plugins/plugin-publisher.js";
+import { AccountBrowserSwitchService } from "../accounts/application/account-browser-switch-service.js";
+import { registerAccountBrowserSwitchIpc } from "../accounts/ipc/register-account-browser-switch-ipc.js";
+import { publicUpdateFetch } from "../updates/public-update-fetch.js";
+import { join } from "node:path";
+import { FingerprintBrowserService } from "../browser/fingerprint-browser-service.js";
+import { registerFingerprintBrowserIpc } from "../browser/register-fingerprint-browser-ipc.js";
+import { fingerprintBrowserVersion } from "@nedia-matrix/automation-playwright";
+import { desktopPreferences } from "../preferences/desktop-preferences.js";
+import { DesktopBrowserPolicy } from "../accounts/infrastructure/desktop-browser-policy.js";
 import { randomUUID } from "node:crypto";
 import { release as operatingSystemRelease } from "node:os";
 import path from "node:path";
 
 import type { AccountRepository } from "@nedia-matrix/account-management";
-import type {
-  PublicationAccountView,
-  PublicationRepository,
-} from "@nedia-matrix/publishing";
+import type { PublicationRepository } from "@nedia-matrix/publishing";
 import {
   JsonlDiagnosticStore,
   type DiagnosticTrace,
@@ -119,6 +129,8 @@ export class DesktopRuntime {
   private readonly publicationObservations: PublicationObservationQueue;
   private readonly publishObservations: PublishObservationManager;
   private readonly browserSessions: PlaywrightBrowserSessionHost;
+  private accountBrowserSwitch: AccountBrowserSwitchService | undefined;
+  private readonly fingerprintBrowser: FingerprintBrowserService;
   private readonly diagnostics: DesktopDiagnosticTraceService;
   private readonly startupTrace: ReturnType<
     DesktopDiagnosticTraceService["start"]
@@ -345,11 +357,16 @@ export class DesktopRuntime {
       return this.publicationObservations.accept(event);
     });
     this.browserSessions = new PlaywrightBrowserSessionHost(
-      (accountId) => {
-        cleanupClosedBrowserSession(accountId, {
-          mediaSelections: this.mediaSelections,
-          publishObservations: this.publishObservations,
-        });
+      (accountId, profileId) => {
+        cleanupClosedBrowserSession(
+          accountId,
+          {
+            accountStore: this.accountStore,
+            mediaSelections: this.mediaSelections,
+            publishObservations: this.publishObservations,
+          },
+          profileId,
+        );
       },
       undefined,
       () => {
@@ -361,7 +378,50 @@ export class DesktopRuntime {
         });
       },
       (runtimes) => this.mainWindow.sendAccountBrowserRuntimesChanged(runtimes),
+      ({ base, context, account, platform, assertOwnership }) => {
+        const plugin = desktopPlugins().execution(platform.id);
+        if (!plugin?.execution?.openDataClient)
+          return { dataClient: base, close: async () => base.dispose() };
+        if (account.platformId !== platform.id)
+          throw new Error("平台账号绑定无效");
+        return plugin.execution.openDataClient({
+          settings: resolvePlatformSettings(platform, account.settings),
+          base,
+          account: {
+            platformId: account.platformId,
+            identityScheme: account.identityScheme,
+            externalAccountId: account.externalAccountId,
+          },
+          host: createPlatformExecutionHost({
+            context,
+            assetDirectory: join(plugin.directory, "assets"),
+            assertOwnership,
+          }),
+        });
+      },
     );
+    const fingerprintRoot = join(
+      app.getPath("userData"),
+      "browsers",
+      fingerprintBrowserVersion,
+    );
+    this.fingerprintBrowser = new FingerprintBrowserService(
+      fingerprintRoot,
+      () => this.browserSessions.acquireBrowserMaintenance(fingerprintRoot),
+      {
+        fetch: publicUpdateFetch,
+        enableForNewAccounts: () => {
+          const preferences = desktopPreferences();
+          if (preferences.get().browser.defaultProvider !== "fingerprint") {
+            preferences.update({ browser: { defaultProvider: "fingerprint" } });
+          }
+        },
+      },
+    );
+  }
+
+  assertFingerprintBrowserReady(): Promise<void> {
+    return this.fingerprintBrowser.assertReady();
   }
 
   get canQuit(): boolean {
@@ -560,20 +620,6 @@ export class DesktopRuntime {
           }
         },
       },
-      confirmPublicationRisk: async (account: PublicationAccountView) => {
-        this.mainWindow.open();
-        const result = await dialog.showMessageBox({
-          type: "warning",
-          title: "小红书工具发布风险提示",
-          message: "使用工具操作小红书可能触发平台风控",
-          detail: `当前账号：${account.nickname ?? account.displayName}\n使用工具上传素材、填充内容或发布，可能触发小红书平台风控，导致发布受限或账号受到限制。请确认你已了解风险，再继续操作。`,
-          buttons: ["取消", "我已了解，继续"],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-        });
-        return result.response === 1;
-      },
       notices: new ElectronAutomationNotices(
         async (accountId) => {
           const account = this.accountStore.get(accountId);
@@ -635,11 +681,17 @@ export class DesktopRuntime {
         },
       },
       accountPublications: this.accountPublications,
+      createProfileId: (platformId: string, accountId: string) =>
+        new DesktopBrowserPolicy(
+          app.getPath("userData"),
+          desktopPreferences(),
+        ).createProfileId(platformId, accountId),
       accountStore: this.accountStore,
       platformContents: this.metadata.platformContents,
       browserSessions: this.browserSessions,
       mediaSelections: this.mediaSelections,
       publishObservations: this.publishObservations,
+      pluginPublishing: createPluginPublisher(this.browserSessions),
       publishing: this.publishing,
       publicationArchive: this.metadata.publications,
       publicationSelection: this.metadata.publications,
@@ -733,7 +785,36 @@ export class DesktopRuntime {
     this.publicationObservations.replayPersisted();
     this.startupStage = "recover_interrupted_publications";
     this.application.publications.recoverInterrupted();
+    this.startupStage = "recover_interrupted_browser_switches";
+    this.metadata.accountBrowserSwitches.recoverInterrupted(
+      new Date().toISOString(),
+    );
+    this.accountBrowserSwitch = new AccountBrowserSwitchService({
+      accounts: this.accountStore,
+      operations: this.metadata.accountBrowserSwitches,
+      platforms: desktopPlatformCatalog,
+      policy: new DesktopBrowserPolicy(
+        app.getPath("userData"),
+        desktopPreferences(),
+      ),
+      browser: this.browserSessions,
+      acquireAccount: (accountId) =>
+        this.application!.acquireAccountBrowserSwitch(accountId),
+      assertFingerprintReady: () => this.fingerprintBrowser.assertReady(),
+      cleanup: () => {
+        this.metadata.accountBrowserSwitches.pruneTerminal(
+          new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString(),
+        );
+        return this.application!.accounts.cleanupRetiredProfiles();
+      },
+      diagnostics: this.diagnostics,
+      onChanged: () => {
+        this.mainWindow.sendAccountsChanged();
+        this.localRuntimeServer?.publishAccountsChanged();
+      },
+    });
     this.startupStage = "register_services";
+    registerAccountBrowserSwitchIpc(this.accountBrowserSwitch);
     void this.application.accounts.cleanupRetiredProfiles().catch(() => {
       console.error("Failed to clean up retired browser profiles");
     });
@@ -781,6 +862,8 @@ export class DesktopRuntime {
         try {
           await completeUpdateExit(prepared, {
             cleanup: async () => {
+              await this.accountBrowserSwitch?.stop();
+              await this.fingerprintBrowser.stop();
               await this.localRuntimeServer?.stop();
               await this.publishObservations.stopAll();
               this.publicationObservations.retryPending();
@@ -807,8 +890,28 @@ export class DesktopRuntime {
         }
       },
     });
+    registerFingerprintBrowserIpc(this.fingerprintBrowser);
+    void this.fingerprintBrowser.initialize();
     registerApplicationUpdateIpcHandler(this.application);
     registerDiagnosticIpc({
+      getTechnicalInformation: async () => {
+        const browser = await this.fingerprintBrowser.getStatus();
+        const database = this.metadata.database.connection;
+        return {
+          applicationVersion: app.getVersion(),
+          databaseSchemaVersion: Number(
+            database.prepare("PRAGMA user_version").get()?.user_version,
+          ),
+          sqliteVersion: String(
+            database.prepare("SELECT sqlite_version() AS version").get()
+              ?.version,
+          ),
+          browserVersion: browser.version,
+          browserAvailable: browser.available,
+          operatingSystem: `${process.platform} ${operatingSystemRelease()}`,
+          architecture: process.arch,
+        };
+      },
       logDirectory: path.join(app.getPath("userData"), "diagnostics"),
       evidenceDirectories: [
         path.join(app.getPath("userData"), "diagnostics", "evidence"),
@@ -900,26 +1003,38 @@ export class DesktopRuntime {
       requestId: randomUUID(),
     });
     this.publicationObservations.retryPending();
+    const switchCleanup =
+      this.accountBrowserSwitch?.stop() ?? Promise.resolve();
+    const fingerprintCleanup = Promise.all([
+      switchCleanup,
+      this.fingerprintBrowser.stop(),
+    ]);
     const shutdown = Promise.all([
-      (this.application?.stopCommands() ?? Promise.resolve()).then(() =>
-        shutdownDesktopRuntime({
-          browserSessions: this.browserSessions,
-          mediaSelections: this.mediaSelections,
-          publishObservations: this.publishObservations,
-          diagnostics: this.diagnostics,
-          report: (event, details) =>
-            shutdownTrace.report({
-              component: "application",
-              event,
-              ...(details ? { details } : {}),
-            }),
-          finishDiagnostics: (result) => shutdownTrace.finish(result),
-        }),
-      ),
+      switchCleanup
+        .then(() => this.application?.stopCommands())
+        .then(() =>
+          shutdownDesktopRuntime({
+            browserSessions: this.browserSessions,
+            mediaSelections: this.mediaSelections,
+            publishObservations: this.publishObservations,
+            diagnostics: this.diagnostics,
+            report: (event, details) =>
+              shutdownTrace.report({
+                component: "application",
+                event,
+                ...(details ? { details } : {}),
+              }),
+            finishDiagnostics: (result) => shutdownTrace.finish(result),
+          }),
+        ),
       this.localRuntimeServer?.stop(),
     ]).then(() => undefined);
 
-    void waitForShutdown(shutdown, SHUTDOWN_TIMEOUT_MS)
+    void shutdown.catch(() => undefined);
+    // Installer cleanup has its own network/process timeouts. Do not force exit
+    // before a mounted volume or probe process has been released.
+    void fingerprintCleanup
+      .then(() => waitForShutdown(shutdown, SHUTDOWN_TIMEOUT_MS))
       .then((result) => {
         if (result === "timed-out") {
           console.warn(

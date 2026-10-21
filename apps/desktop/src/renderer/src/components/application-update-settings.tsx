@@ -245,9 +245,7 @@ export function ApplicationUpdateSettings() {
             <label class="update-source-label" for="update-source-url">
               更新地址
             </label>
-            <p id="update-source-hint">
-              支持 GitHub 仓库或更新清单地址。
-            </p>
+            <p id="update-source-hint">支持 GitHub 仓库或更新清单地址。</p>
           </div>
           <div class="update-source-controls">
             <input

@@ -34,6 +34,7 @@ export interface InstallContext {
   resources: string;
   userData: string;
   currentVersion: string;
+  includePlugins?: boolean;
 }
 export interface InstallRequest {
   id: string;
@@ -151,6 +152,11 @@ export async function prepareInstallation(
     flag: "wx",
     mode: 0o600,
   });
+  await writeFile(
+    join(directory, "plugin-choice.json"),
+    JSON.stringify({ id, includePlugins: context.includePlugins === true }),
+    { flag: "wx", mode: 0o600 },
+  );
   const child = spawn(helper, [join(directory, "request.json")], {
     detached: true,
     stdio: "ignore",
@@ -224,6 +230,7 @@ export async function recordUpdateStartup(
   context: InstallContext,
   completed: boolean,
   trashItem?: (file: string) => Promise<void>,
+  stagePlugins?: () => void,
 ): Promise<void> {
   if (!context.packaged) return;
   const root = join(context.userData, "application-updates", "installations");
@@ -281,6 +288,31 @@ export async function recordUpdateStartup(
           request.id)
     )
       continue;
+    if (
+      !completed &&
+      stagePlugins &&
+      (await readFile(join(directory, "plugins-staged"), "utf8").catch(
+        () => "",
+      )) !== request.id
+    ) {
+      const choice = await readFile(
+        join(directory, "plugin-choice.json"),
+        "utf8",
+      ).catch(() => "");
+      if (choice) {
+        let selected: { id?: string; includePlugins?: boolean } | undefined;
+        try {
+          selected = JSON.parse(choice);
+        } catch {
+          /* Invalid intent must never authorize plugin replacement. */
+        }
+        if (selected?.id === request.id && selected.includePlugins === true)
+          stagePlugins();
+      }
+      await writeFile(join(directory, "plugins-staged"), request.id, {
+        mode: 0o600,
+      });
+    }
     await writeFile(
       join(directory, completed ? "success" : "migration-started"),
       request.id,

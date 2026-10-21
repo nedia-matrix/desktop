@@ -9,7 +9,9 @@ coverage/
 *.log
 .env
 !.env.example
-/output/playwright/
-/.local/
-
-/apps/desktop/resources/update-helper/
+.local/
+output/playwright/
+apps/desktop/resources/update-helper/
+apps/desktop/resources/plugins/
+apps/desktop/.plugins-development/
+apps/desktop/.plugins-build/

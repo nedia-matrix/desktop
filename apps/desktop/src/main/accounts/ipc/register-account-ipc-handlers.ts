@@ -20,6 +20,11 @@ export function registerAccountIpcHandlers(
   ipcMain.handle(ipcChannels.listPlatforms, () =>
     application.platformSummaries(),
   );
+  ipcMain.handle(ipcChannels.setAccountSettings, (_event, request) => {
+    if (!application.accounts.setSettings)
+      throw new Error("账号发布设置不可用");
+    return application.accounts.setSettings(request);
+  });
   ipcMain.handle(ipcChannels.listPlatformAccounts, () =>
     application.accounts.list(),
   );

@@ -1,12 +1,23 @@
+import { platformForAccount } from "../shared.js";
 import type { PublishResultUpdate } from "@nedia-matrix/publishing";
 import type { PublicationTaskSummary } from "@nedia-matrix/publishing";
 import type {
   SubmissionMode,
   SupportedPublishContentForm as PublishContentForm,
 } from "@nedia-matrix/publishing";
-import { preparePublishText } from "@nedia-matrix/platform-sdk";
+import {
+  accountSubmissionMode as resolveAccountSubmissionMode,
+  collectPublishTags,
+  preparePublishText,
+} from "@nedia-matrix/platform-sdk";
 import type { PlatformSummary } from "../../../bridge/contracts.js";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "preact/hooks";
 import { createPortal } from "preact/compat";
 
 import type { AppContext } from "../app-context.js";
@@ -97,12 +108,24 @@ export function PublishPage({
   }, [context, context.activePublicationId, submissionInFlight]);
 
   const selectedAccount = accounts.find(({ id }) => id === accountId);
-  const platform = context.platforms.find(
-    ({ id }) => id === selectedAccount?.platformId,
+  const platform = useMemo(
+    () => platformForAccount(context.platforms, selectedAccount),
+    [context.platforms, selectedAccount?.id, selectedAccount?.platformId],
   );
   const capability = platform?.publishCapabilities.find(
     ({ contentForm: supportedForm }) => supportedForm === contentForm,
   );
+  const accountSubmissionMode = selectedAccount
+    ? resolveAccountSubmissionMode(selectedAccount)
+    : "manual_confirmation";
+  const limitedSubmissionMode =
+    capability?.submissionModes.length === 1
+      ? capability.submissionModes[0]
+      : undefined;
+  const initializedSubmissionAccount = useRef<string>();
+  const recreatedDraftRequiresManualConfirmation =
+    Boolean(context.recreatedDraft) &&
+    Boolean(capability?.submissionModes.includes("manual_confirmation"));
   const supportedForms = useMemo(
     () =>
       new Set(
@@ -111,6 +134,7 @@ export function PublishPage({
     [platform],
   );
   const requestedTags = useMemo(() => parseTags(tags), [tags]);
+  const totalTagCount = collectPublishTags(body, requestedTags).length;
   const preparedBody = capability
     ? preparePublishText(
         {
@@ -130,12 +154,13 @@ export function PublishPage({
   const bodyFeedback = textConstraintFeedback(capability, "body", preparedBody);
   const tagLimitExceeded =
     capability?.tagPolicy?.maxCount !== undefined &&
-    requestedTags.length > capability.tagPolicy.maxCount;
+    totalTagCount > capability.tagPolicy.maxCount;
   const mediaLimitExceeded =
     mediaSelection !== undefined &&
     capability?.constraints.mediaMaxCount !== undefined &&
     mediaSelection.files.length > capability.constraints.mediaMaxCount;
   const hasHardConstraintViolation =
+    !capability?.submissionModes.includes(submissionMode) ||
     titleFeedback.exceeded ||
     bodyFeedback.exceeded ||
     tagLimitExceeded ||
@@ -180,13 +205,29 @@ export function PublishPage({
     if (firstSupported) setContentForm(firstSupported);
   }, [contentForm, platform, supportedForms]);
 
-  useEffect(() => {
-    if (!capability) return;
-    const supportedModes = capability.submissionModes;
-    if (!supportedModes.includes(submissionMode)) {
-      setSubmissionMode(supportedModes[0] ?? "automatic");
+  useLayoutEffect(() => {
+    if (!selectedAccount || !capability) return;
+    if (initializedSubmissionAccount.current !== selectedAccount.id) {
+      initializedSubmissionAccount.current = selectedAccount.id;
+      setSubmissionMode(
+        limitedSubmissionMode ??
+          (recreatedDraftRequiresManualConfirmation
+            ? "manual_confirmation"
+            : accountSubmissionMode),
+      );
+      return;
     }
-  }, [capability, submissionMode]);
+    // Account refreshes preserve a manual choice; execution constraints still apply.
+    if (limitedSubmissionMode) setSubmissionMode(limitedSubmissionMode);
+    else if (recreatedDraftRequiresManualConfirmation)
+      setSubmissionMode("manual_confirmation");
+  }, [
+    selectedAccount?.id,
+    capability,
+    accountSubmissionMode,
+    limitedSubmissionMode,
+    recreatedDraftRequiresManualConfirmation,
+  ]);
 
   const previousMediaTarget = useRef({ accountId, contentForm });
   useEffect(() => {
@@ -239,6 +280,10 @@ export function PublishPage({
   const submitDraft = async (event: SubmitEvent) => {
     event.preventDefault();
     if (submissionInFlight) return;
+    if (!capability?.submissionModes.includes(submissionMode)) {
+      context.setStatus("该平台不支持已选提交模式，请重新选择", "error");
+      return;
+    }
     if (!accountId) {
       context.setStatus("请先连接并选择平台账号", "error");
       return;
@@ -384,7 +429,7 @@ export function PublishPage({
           <label class="publish-account-field" for="publish-account">
             <span class="publish-sr-only">发布账号</span>
             <PlatformIcon
-              platformId={selectedAccount?.platformId ?? ""}
+              iconUrl={platform?.iconUrl}
               platformName={platform?.displayName ?? "平台"}
             />
             <select
@@ -652,7 +697,7 @@ export function PublishPage({
                 <label class="field-label" for="draft-tags">
                   话题标签
                   <span class={tagLimitExceeded ? "publish-error" : undefined}>
-                    {requestedTags.length}
+                    {totalTagCount}
                     {capability?.tagPolicy?.maxCount
                       ? ` / ${capability.tagPolicy.maxCount}`
                       : ""}{" "}
@@ -679,8 +724,8 @@ export function PublishPage({
                   }
                 >
                   {tagLimitExceeded
-                    ? `当前平台最多支持 ${capability?.tagPolicy?.maxCount} 个标签`
-                    : "用逗号或换行分隔，标签会随正文一起发布。"}
+                    ? `正文与独立标签合计 ${totalTagCount} 个话题，当前平台最多支持 ${capability?.tagPolicy?.maxCount} 个，请减少话题。`
+                    : "用逗号或换行分隔；计数包含正文内话题，相同话题只计一次。"}
                 </small>
               </div>
             </section>
@@ -712,13 +757,20 @@ export function PublishPage({
                   value="manual_confirmation"
                   checked={submissionMode === "manual_confirmation"}
                   disabled={
+                    Boolean(limitedSubmissionMode) ||
                     !capability?.submissionModes.includes("manual_confirmation")
                   }
                   onChange={() => setSubmissionMode("manual_confirmation")}
                 />
                 <span>
                   <strong>
-                    人工确认 <em>推荐</em>
+                    人工确认{" "}
+                    {limitedSubmissionMode === "manual_confirmation" ? (
+                      <em>插件限定</em>
+                    ) : !limitedSubmissionMode &&
+                      accountSubmissionMode === "manual_confirmation" ? (
+                      <em>账号设置</em>
+                    ) : null}
                   </strong>
                   <small>填充草稿，检查后手动发布</small>
                 </span>
@@ -732,16 +784,29 @@ export function PublishPage({
                   value="automatic"
                   checked={submissionMode === "automatic"}
                   disabled={
-                    Boolean(context.recreatedDraft) ||
+                    Boolean(limitedSubmissionMode) ||
+                    recreatedDraftRequiresManualConfirmation ||
                     !capability?.submissionModes.includes("automatic")
                   }
                   onChange={() => setSubmissionMode("automatic")}
                 />
                 <span>
-                  <strong>自动提交</strong>
+                  <strong>
+                    自动提交{" "}
+                    {limitedSubmissionMode === "automatic" ? (
+                      <em>插件限定</em>
+                    ) : !limitedSubmissionMode &&
+                      accountSubmissionMode === "automatic" ? (
+                      <em>账号设置</em>
+                    ) : null}
+                  </strong>
                   <small>填充完成后直接提交到平台</small>
                 </span>
               </label>
+              {capability &&
+                !capability.submissionModes.includes(submissionMode) && (
+                  <p role="status">该平台不支持已选提交模式，请重新选择。</p>
+                )}
             </section>
             <section
               class="inspector-section"

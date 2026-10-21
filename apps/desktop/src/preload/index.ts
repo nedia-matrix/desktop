@@ -1,3 +1,5 @@
+import type { PlatformContentSyncProgress } from "@nedia-matrix/platform-content";
+import type { FingerprintBrowserStatus } from "../bridge/fingerprint-browser.js";
 import type { MatrixDesktopApi } from "../bridge/api.js";
 import { ipcChannels } from "../bridge/channels.js";
 import type {
@@ -28,6 +30,15 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { AccountBrowserRuntime } from "../bridge/account-browser-runtime.js";
 
 const api: MatrixDesktopApi = {
+  listPlugins: () => ipcRenderer.invoke(ipcChannels.listPlugins),
+  listBundledPlugins: () => ipcRenderer.invoke(ipcChannels.listBundledPlugins),
+  installBundledPlugin: (id) =>
+    ipcRenderer.invoke(ipcChannels.installBundledPlugin, id),
+  installPlugin: () => ipcRenderer.invoke(ipcChannels.installPlugin),
+  changePlugin: (change) =>
+    ipcRenderer.invoke(ipcChannels.changePlugin, change),
+  setAccountSettings: (request) =>
+    ipcRenderer.invoke(ipcChannels.setAccountSettings, request),
   listAccountBrowserRuntimes: () =>
     ipcRenderer.invoke(ipcChannels.listAccountBrowserRuntimes),
   onAccountBrowserRuntimesChanged: (listener) => {
@@ -39,6 +50,32 @@ const api: MatrixDesktopApi = {
     return () =>
       ipcRenderer.removeListener(
         ipcChannels.accountBrowserRuntimesChanged,
+        handler,
+      );
+  },
+  getAccountBrowserState: (request) =>
+    ipcRenderer.invoke(ipcChannels.getAccountBrowserState, request),
+  beginAccountBrowserSwitch: (request) =>
+    ipcRenderer.invoke(ipcChannels.beginAccountBrowserSwitch, request),
+  getAccountBrowserSwitch: (request) =>
+    ipcRenderer.invoke(ipcChannels.getAccountBrowserSwitch, request),
+  cancelAccountBrowserSwitch: (request) =>
+    ipcRenderer.invoke(ipcChannels.cancelAccountBrowserSwitch, request),
+  getFingerprintBrowserStatus: () =>
+    ipcRenderer.invoke(ipcChannels.getFingerprintBrowserStatus),
+  installFingerprintBrowser: (request) =>
+    ipcRenderer.invoke(ipcChannels.installFingerprintBrowser, request),
+  cancelFingerprintBrowserInstall: (request) =>
+    ipcRenderer.invoke(ipcChannels.cancelFingerprintBrowserInstall, request),
+  onFingerprintBrowserChanged: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      state: FingerprintBrowserStatus,
+    ) => listener(state);
+    ipcRenderer.on(ipcChannels.fingerprintBrowserChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(
+        ipcChannels.fingerprintBrowserChanged,
         handler,
       );
   },
@@ -93,6 +130,18 @@ const api: MatrixDesktopApi = {
   },
   listPlatformContents: (request: PlatformAccountRequest) =>
     ipcRenderer.invoke(ipcChannels.listPlatformContents, request),
+  onPlatformContentSyncProgress: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      progress: PlatformContentSyncProgress,
+    ) => listener(progress);
+    ipcRenderer.on(ipcChannels.platformContentSyncProgress, handler);
+    return () =>
+      ipcRenderer.removeListener(
+        ipcChannels.platformContentSyncProgress,
+        handler,
+      );
+  },
   refreshPlatformContents: (request: PlatformAccountRequest) =>
     ipcRenderer.invoke(ipcChannels.refreshPlatformContents, request),
   openPlatformContent: (request) =>
@@ -137,6 +186,8 @@ const api: MatrixDesktopApi = {
     ipcRenderer.invoke(ipcChannels.getLocalRuntimeStatus),
   setLocalRuntimeRunning: (request: SetLocalRuntimeRunningRequest) =>
     ipcRenderer.invoke(ipcChannels.setLocalRuntimeRunning, request),
+  getTechnicalInformation: () =>
+    ipcRenderer.invoke(ipcChannels.getTechnicalInformation),
   openDiagnosticDirectory: () =>
     ipcRenderer.invoke(ipcChannels.openDiagnosticDirectory),
   findDiagnosticTrace: (request: FindDiagnosticTraceRequest) =>

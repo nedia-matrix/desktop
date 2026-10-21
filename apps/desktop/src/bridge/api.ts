@@ -1,4 +1,20 @@
 import type {
+  PlatformPluginSummary,
+  PlatformPluginChange,
+  BundledPlatformPlugin,
+} from "./plugins.js";
+import type {
+  AccountBrowserState,
+  AccountBrowserSwitchStatus,
+  BeginAccountBrowserSwitchRequest,
+  AccountBrowserSwitchRequest,
+} from "./account-browser-switch.js";
+import type {
+  FingerprintBrowserStatus,
+  InstallFingerprintBrowserRequest,
+  CancelFingerprintBrowserInstallRequest,
+} from "./fingerprint-browser.js";
+import type {
   DesktopPreferences,
   GetPreferencesRequest,
   UpdatePreferencesRequest,
@@ -15,6 +31,7 @@ import type {
 import type {
   PlatformContentSnapshot,
   PlatformContentSyncRun,
+  PlatformContentSyncProgress,
 } from "@nedia-matrix/platform-content";
 import type {
   OpenPublicationRequest,
@@ -32,6 +49,7 @@ import type {
 } from "@nedia-matrix/publishing";
 
 import type {
+  ApplicationTechnicalInformation,
   ApplicationUpdateCheckResult,
   ApplicationUpdateState,
   DiagnosticTraceRecord,
@@ -51,9 +69,39 @@ import type {
 import type { AccountBrowserRuntime } from "./account-browser-runtime.js";
 
 export interface MatrixDesktopApi {
+  listPlugins(): Promise<PlatformPluginSummary[]>;
+  listBundledPlugins(): Promise<BundledPlatformPlugin[]>;
+  installBundledPlugin(id: string): Promise<PlatformPluginSummary[]>;
+  installPlugin(): Promise<PlatformPluginSummary[]>;
+  changePlugin(change: PlatformPluginChange): Promise<PlatformPluginSummary[]>;
+  setAccountSettings(
+    request: import("@nedia-matrix/account-management").SetAccountSettingsRequest,
+  ): Promise<PlatformAccountView>;
   listAccountBrowserRuntimes(): Promise<AccountBrowserRuntime[]>;
   onAccountBrowserRuntimesChanged(
     listener: (runtimes: AccountBrowserRuntime[]) => void,
+  ): () => void;
+  getAccountBrowserState(
+    request: PlatformAccountRequest,
+  ): Promise<AccountBrowserState>;
+  beginAccountBrowserSwitch(
+    request: BeginAccountBrowserSwitchRequest,
+  ): Promise<AccountBrowserSwitchStatus>;
+  getAccountBrowserSwitch(
+    request: AccountBrowserSwitchRequest,
+  ): Promise<AccountBrowserSwitchStatus>;
+  cancelAccountBrowserSwitch(
+    request: AccountBrowserSwitchRequest,
+  ): Promise<AccountBrowserSwitchStatus>;
+  getFingerprintBrowserStatus(): Promise<FingerprintBrowserStatus>;
+  installFingerprintBrowser(
+    request?: InstallFingerprintBrowserRequest,
+  ): Promise<FingerprintBrowserStatus>;
+  cancelFingerprintBrowserInstall(
+    request: CancelFingerprintBrowserInstallRequest,
+  ): Promise<FingerprintBrowserStatus>;
+  onFingerprintBrowserChanged(
+    listener: (state: FingerprintBrowserStatus) => void,
   ): () => void;
   getPreferences(request?: GetPreferencesRequest): Promise<DesktopPreferences>;
   updatePreferences(
@@ -94,6 +142,9 @@ export interface MatrixDesktopApi {
     items: PlatformContentSnapshot[];
     latestRun: PlatformContentSyncRun | null;
   }>;
+  onPlatformContentSyncProgress(
+    listener: (progress: PlatformContentSyncProgress) => void,
+  ): () => void;
   refreshPlatformContents(
     request: PlatformAccountRequest,
   ): Promise<PlatformContentSyncRun>;
@@ -145,6 +196,7 @@ export interface MatrixDesktopApi {
   setLocalRuntimeRunning(
     request: SetLocalRuntimeRunningRequest,
   ): Promise<LocalRuntimeStatus>;
+  getTechnicalInformation(): Promise<ApplicationTechnicalInformation>;
   openDiagnosticDirectory(): Promise<void>;
   findDiagnosticTrace(
     request: FindDiagnosticTraceRequest,

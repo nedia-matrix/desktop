@@ -1,3 +1,4 @@
+import { resolveAccountPlatform } from "@nedia-matrix/platform-sdk";
 import type { PublishContentForm } from "../domain/index.js";
 
 import type {
@@ -50,7 +51,7 @@ export function registerLocalMedia(
     return { status: "login_required" };
   }
 
-  const platform = dependencies.platforms.require(account.platformId);
+  const platform = resolveAccountPlatform(dependencies.platforms, account);
   const form = platform.publishing?.forms[command.contentForm];
   if (!form) {
     throw new TypeError(
